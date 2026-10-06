@@ -25,8 +25,7 @@ export class HitSounds {
 
   async prepare() {
     const context = this.transport.ensureContext();
-    if (!this.gain) { this.gain = context.createGain(); this.gain.connect(context.destination); }
-    this.gain.gain.value = this.volume;
+    if (!this.gain) { this.gain = context.createGain(); this.gain.gain.value = 1; this.gain.connect(context.destination); }
     const generation = this.generation;
     const names = new Set(['tap', 'drag', 'flick', ...(this.chart?.judgeLineList ?? []).flatMap(line => (line.notes ?? []).map(note => note.hitsound || note.hitSound).filter(Boolean))]);
     await Promise.all([...names].map(async name => {
@@ -74,6 +73,12 @@ export class HitSounds {
       source.start(context.currentTime + Math.max(0, entry.time - time) / this.transport.rate);
       this.sources.add(source);
       sameTime.set(timeKey, timeCount + 1); burst++;
+    }
+    const gainTarget = this.sources.size <= 5 ? 1 : this.sources.size <= 20 ? 0.5 : this.sources.size <= 50 ? 0.3 : 0.15;
+    if (this.gain && this.gain.gain && typeof this.gain.gain.setTargetAtTime === 'function') {
+      const smoothing = gainTarget < (this.gainLevel ?? 1) ? 0.02 : 0.08;
+      this.gain.gain.setTargetAtTime(gainTarget, context.currentTime, smoothing);
+      this.gainLevel = gainTarget;
     }
   }
 }
