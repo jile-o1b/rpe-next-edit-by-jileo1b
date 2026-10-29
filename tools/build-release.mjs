@@ -10,6 +10,7 @@ import { dirname, join, resolve, basename, relative, isAbsolute } from 'node:pat
 import { fileURLToPath } from 'node:url';
 import { extractReleaseZip, verifyReleaseSourceDirectory, verifyReleaseSourceZip } from './release-source.mjs';
 import { EDITOR_PACKAGE_SOURCES, SERVER_PACKAGE_SOURCES } from './package-sources.mjs';
+import { macOSAdHocSignOptions, verifyMacOSAdHocSigning } from './macos-signing.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const kind = process.argv.includes('--server') ? 'server' : 'editor';
@@ -90,7 +91,7 @@ const packaged = await packager({
   appCopyright: 'Copyright 2026 cmdysj', prune: false, asar: false, overwrite: false,
   darwinDarkModeSupport: true,
   ...(kind === 'editor' && platform === 'darwin' ? { extendInfo: { NSMicrophoneUsageDescription: '按住语音输入快捷键时，在本机识别麦克风音频并填入文本框。Microphone audio is transcribed locally while the dictation key is held.' } } : {}),
-  ...(platform === 'darwin' ? { osxSign: { identity: '-', identityValidation: false, continueOnError: false } } : {}),
+  ...(platform === 'darwin' ? { osxSign: macOSAdHocSignOptions() } : {}),
   afterExtract: [async ({ buildPath }) => trimLocales(buildPath)]
 });
 if (packaged.length !== 1) throw Error('Unexpected package count');
@@ -105,10 +106,13 @@ if (platform === 'linux') args.push('--no-sandbox');
 if (platform === 'darwin') args.push('--use-angle=metal', '--ignore-gpu-blocklist');
 else args.push('--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader');
 console.log('Testing packaged application: ' + platform + '/' + arch + ' ' + kind);
-const smoke = await run(executable, args, { env: { ...process.env, RPE_NATIVE_TEST_HOME: join(work, 'test-profile') }, timeout: platform === 'darwin' && arch === 'x64' ? 480000 : 240000 });
-if (kind === 'editor' ? !smoke.includes('"errors":[]') || !smoke.includes('real native IPC opens image parent') : !smoke.includes('"protocol":1') || !smoke.includes('"errors":[]')) throw Error('Packaged smoke result is incomplete');
-if (kind === 'editor' && !smoke.includes('built-in note skin files and images load through the packaged application protocol')) throw Error('Built-in note skin check is missing');
-if (platform === 'darwin') execFileSync('codesign', ['--verify', '--deep', '--strict', bundle]);
+async function smokeApplication(path, profile) {
+  const smoke = await run(path, args, { env: { ...process.env, RPE_NATIVE_TEST_HOME: profile }, timeout: platform === 'darwin' && arch === 'x64' ? 480000 : 240000 });
+  if (kind === 'editor' ? !smoke.includes('"errors":[]') || !smoke.includes('real native IPC opens image parent') : !smoke.includes('"protocol":1') || !smoke.includes('"errors":[]')) throw Error('Packaged smoke result is incomplete');
+  if (kind === 'editor' && !smoke.includes('built-in note skin files and images load through the packaged application protocol')) throw Error('Built-in note skin check is missing');
+}
+if (platform === 'darwin') await verifyMacOSAdHocSigning(bundle);
+await smokeApplication(executable, join(work, 'test-profile'));
 
 const help = [
   product + ' ' + metadata.version, '',
@@ -123,7 +127,7 @@ const help = [
   'Source commit: ' + sourceCommit, ''
 ].join('\n');
 await mkdir(output, { recursive: true });
-let archive;
+let archive, macOSVerification;
 if (platform === 'darwin') {
   const image = join(work, 'disk-image'); await mkdir(image);
   await cp(bundle, join(image, basename(bundle)), { recursive: true, dereference: false, verbatimSymlinks: true });
@@ -141,6 +145,20 @@ if (platform === 'darwin') {
     }
   }
   await run('hdiutil', ['verify', archive]);
+  // Test what users install, including the framework symlinks and the actual
+  // signed entitlements after both the DMG and application copy operations.
+  const mount = join(work, 'mounted-image'), installed = join(work, 'installed', basename(bundle));
+  await mkdir(mount);
+  await run('hdiutil', ['attach', '-readonly', '-nobrowse', '-mountpoint', mount, archive]);
+  try {
+    await run('ditto', [join(mount, basename(bundle)), installed]);
+  } finally {
+    await run('hdiutil', ['detach', mount]);
+  }
+  await verifyReleaseSourceDirectory(root, sourceCommit, sourcePaths, join(installed, 'Contents/Resources/app'));
+  const signedProcesses = await verifyMacOSAdHocSigning(installed);
+  await smokeApplication(join(installed, 'Contents/MacOS', executableName), join(work, 'installed-test-profile'));
+  macOSVerification = { signedProcesses, installedFromDmg: true };
 } else {
   await writeFile(join(directory, '使用说明.txt'), '\uFEFF' + help);
   if (platform === 'win32') {
@@ -164,6 +182,6 @@ if (platform === 'darwin') {
 }
 const digest = createHash('sha256'); for await (const chunk of createReadStream(archive)) digest.update(chunk);
 const bytes = (await stat(archive)).size;
-const manifest = { ...buildInfo, file: basename(archive), bytes, sha256: digest.digest('hex'), unpackedBytes: await directoryBytes(directory), removedLocaleBytes, sourceFilesVerified, verified: true };
+const manifest = { ...buildInfo, file: basename(archive), bytes, sha256: digest.digest('hex'), unpackedBytes: await directoryBytes(directory), removedLocaleBytes, sourceFilesVerified, verified: true, ...(macOSVerification ? { macOSVerification } : {}) };
 await writeFile(join(output, stem + '.json'), JSON.stringify(manifest, null, 2) + '\n');
 console.log(JSON.stringify(manifest));

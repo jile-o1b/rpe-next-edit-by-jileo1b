@@ -11,6 +11,7 @@ const names = await readdir(directory), checksums = [], summary = [];
 for (const name of names.filter(name => name.endsWith('.json'))) {
   const info = JSON.parse(await readFile(join(directory, name), 'utf8')), target = [info.kind, info.platform, info.arch].join('-');
   if (!expected.delete(target) || info.sourceCommit !== sourceCommit || info.version !== version || !info.verified || !Number.isInteger(info.sourceFilesVerified) || info.sourceFilesVerified <= 0) throw Error('Unexpected or unverified artifact: ' + name);
+  if (info.platform === 'darwin' && (info.macOSVerification?.installedFromDmg !== true || !Number.isInteger(info.macOSVerification?.signedProcesses) || info.macOSVerification.signedProcesses < 2)) throw Error('Missing macOS signing or installed DMG verification: ' + name);
   if (info.file !== basename(info.file) || !/\.(?:zip|dmg|tar\.xz)$/.test(info.file) || !names.includes(info.file)) throw Error('Invalid archive reference: ' + name);
   const path = join(directory, info.file), actualSize = (await stat(path)).size;
   if (actualSize !== info.bytes || actualSize < 10 * 1024 ** 2 || actualSize >= 2 * 1024 ** 3) throw Error('Unexpected package size: ' + info.file);
