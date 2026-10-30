@@ -1,14 +1,15 @@
 import { History } from './history.mjs';
 import { integerChartAlpha } from '../core/alpha-values.mjs';
-import { createChart, createLine } from '../core/chart.mjs';
+import { createChart } from '../core/chart.mjs';
 import { beatValue, fromNumber } from '../core/beat.mjs';
 import { selectionState, sameSelection, remapSelection, restoreSelection } from './selection-history.mjs';
 import { emitModHook } from '../core/mod-hooks.mjs';
 import { t } from '../i18n.mjs';
 import { normalizeLineGroups } from '../core/line-groups.mjs';
+import { normalizeNoteDefaults, normalizeLineDefaults, createPlacedLine, createPlacedNote } from '../core/placement-defaults.mjs';
 
 export class EditorSession extends EventTarget {
-  constructor(chart = createChart()) {
+  constructor(chart = createChart(), { lineEventDefaults } = {}) {
     super();
     this.history = new History(integerChartAlpha(normalizeLineGroups(chart)));
     this.lineIndex = 0;
@@ -29,7 +30,12 @@ export class EditorSession extends EventTarget {
     this.multiSelectionIntent = null;
     this.editSeconds = 0;
     this.recentEdits = [];
+    this.noteDefaults = normalizeNoteDefaults();
+    this.lineEventDefaults = normalizeLineDefaults(lineEventDefaults);
   }
+
+  createNote(type, beat, positionX, endBeat) { return createPlacedNote(type, beat, positionX, endBeat, this.noteDefaults); }
+  createLine(name) { return createPlacedLine(name, this.lineEventDefaults); }
 
   get chart() { return this.history.document; }
   get line() { return this.chart.judgeLineList?.[this.lineIndex]; }
@@ -277,7 +283,7 @@ export class EditorSession extends EventTarget {
     this.lineIndex = this.chart.judgeLineList?.length ?? 0;
     this.selection.clear();
     this.eventSelection.clear();
-    this.commit(t('session.s665c6b7'), { ...this.chart, judgeLineList: [...(this.chart.judgeLineList ?? []), createLine(`Line ${this.lineIndex + 1}`)] }, beforeSelection);
+    this.commit(t('session.s665c6b7'), { ...this.chart, judgeLineList: [...(this.chart.judgeLineList ?? []), this.createLine(`Line ${this.lineIndex + 1}`)] }, beforeSelection);
   }
 
   travel(direction) {

@@ -1,6 +1,6 @@
 import { t } from '../i18n.mjs';
 
-const categories = ['general', 'appearance', 'editor', 'preview', 'audio', 'input', 'storage', 'compatibility'];
+const categories = ['general', 'appearance', 'editor', 'preview', 'audio', 'input', 'storage', 'compatibility', 'about'];
 const icons = {
   general: 'M4 6h16M4 12h16M4 18h16M8 3v6M16 9v6M10 15v6',
   appearance: 'M12 3a9 9 0 1 0 0 18h1a2 2 0 0 0 1-3.7 1.5 1.5 0 0 1 1-2.8h2A4 4 0 0 0 21 10c0-4-4-7-9-7ZM7 10h.01M10 6h.01M15 6h.01M18 10h.01',
@@ -10,6 +10,7 @@ const icons = {
   input: 'M3 5h18v14H3zM6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 13h.01M10 13h.01M14 13h.01M18 13h.01M8 16h8',
   storage: 'M4 3h13l3 3v15H4zM8 3v6h8V3M8 21v-8h8v8',
   compatibility: 'M8 3v5M16 3v5M5 8h14v4a7 7 0 0 1-14 0ZM12 19v3',
+  about: 'M12 8h.01M11 12h1v5M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z',
 };
 const normalize = value => String(value).normalize('NFKC').toLocaleLowerCase().replace(/\s+/g, '');
 

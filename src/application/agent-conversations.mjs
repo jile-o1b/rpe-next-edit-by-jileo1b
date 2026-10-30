@@ -18,6 +18,7 @@ export class AgentConversations {
     for (const record of snapshot?.records ?? []) {
       if (typeof record?.id !== 'string' || !record.id || !Array.isArray(record.turns)) continue;
       const restored = structuredClone(record); restored.context ??= { ...DEFAULT_AGENT_CONTEXT }; restored.draft ??= '';
+      delete restored.preparingImages;
       for (const turn of restored.turns) if (['running', 'compacting'].includes(turn.status)) { turn.status = 'stopped'; turn.error ??= t('agent-conversations.s1c12b1d'); }
       for (const turn of restored.turns) if (turn.status === 'queued') turn.paused = true;
       this.records.set(restored.id, restored);
@@ -45,7 +46,7 @@ export class AgentConversations {
   }
   snapshot({ turns = true, memory = true } = {}) {
     return { version: 1, selected: this.selected, records: [...this.records.values()].map(record => ({
-      ...structuredClone(Object.fromEntries(Object.entries(record).filter(([key]) => !['turns', 'memory'].includes(key)))),
+      ...structuredClone(Object.fromEntries(Object.entries(record).filter(([key]) => !['turns', 'memory', 'preparingImages'].includes(key)))),
       ...(turns ? { turns: structuredClone(record.turns) } : { turnIds: record.turns.map(turn => turn.id) }),
       ...(record.memory ? { memory: memory ? structuredClone(record.memory) : { through: record.memory.through } } : {}),
     })) };

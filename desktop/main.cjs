@@ -1,7 +1,7 @@
 const { app, BrowserWindow, dialog, net, protocol, shell, ipcMain, safeStorage, utilityProcess, systemPreferences } = require('electron');
 const { realpath, readFile } = require('node:fs/promises');
 const { mkdirSync } = require('node:fs');
-const { resolve, sep } = require('node:path');
+const { resolve, sep, dirname } = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { NativeService } = require('./native-service.cjs');
 
@@ -41,6 +41,17 @@ else {
   app.on('window-all-closed', () => app.quit());
   app.whenReady().then(async () => {
     const root = await realpath(resolve(__dirname, '..'));
+    const { DesktopUpdates, installDesktopUpdates } = await import(pathToFileURL(resolve(__dirname, 'app-update.mjs')).href);
+    const updateTarget = process.platform === 'darwin' ? resolve(dirname(process.execPath), '../..') : dirname(process.execPath);
+    const updater = await new DesktopUpdates({ statePath: resolve(app.getPath('userData'), 'app-updates.json'), target: updateTarget,
+      version: JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8')).version, packaged: app.isPackaged,
+      fetcher: (...args) => net.fetch(...args), restart: () => app.quit(),
+      protectedPaths: () => [app.getPath('userData'), nativeRoot, dictation.root, audioSeparation.root, audioOnsets.root, audioMapper.root, audioSeparation.dataRoot, audioOnsets.dataRoot, audioMapper.dataRoot],
+      progress: value => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('rpen-app-update-progress', value); },
+    }).initialize();
+    installDesktopUpdates({ ipcMain, service: updater, window: () => mainWindow, origin, dialog, startupJob: process.argv.find(value => value.startsWith('--rpen-update-job='))?.slice('--rpen-update-job='.length) });
+    app.on('will-quit', () => updater.approveQuit());
+    app.on('before-quit', () => updater.cancelDownload());
     const { MicrophonePermissions } = await import(pathToFileURL(resolve(root, 'desktop/microphone-permissions.mjs')).href);
     const microphone = await new MicrophonePermissions(resolve(app.getPath('userData'), 'dictation-microphone.json'), { window: () => mainWindow, origin, systemPreferences, shell }).initialize();
     const { DictationService, installDictation } = await import(pathToFileURL(resolve(root, 'desktop/dictation.mjs')).href);
@@ -191,6 +202,7 @@ else {
       }).catch(error => {
         const choice = dialog.showMessageBoxSync(mainWindow, { type: 'warning', title: '设置尚未保存', message: error.message, buttons: ['继续编辑', '仍然退出'], defaultId: 0, cancelId: 0 });
         if (choice === 1) { preferenceFlush = true; mainWindow.close(); }
+        else updater.cancelInstall();
       });
     });
     const abortTokens = () => { rendererGeneration++; for (const token of tokens) native.call('abort', token).catch(() => {}); tokens.clear(); };
@@ -208,7 +220,7 @@ else {
         type: 'question', buttons: ['继续编辑', '放弃未保存修改并退出'], defaultId: 0, cancelId: 0,
         title: '尚未保存', message: '当前谱面有未保存的修改，是否退出？'
       });
-      if (choice === 1) event.preventDefault(); else preferenceFlush = false;
+      if (choice === 1) event.preventDefault(); else { preferenceFlush = false; updater.cancelInstall(); }
     });
     const errors = [];
     mainWindow.webContents.on('console-message', details => { if (details.level === 'error') errors.push(details.message); });

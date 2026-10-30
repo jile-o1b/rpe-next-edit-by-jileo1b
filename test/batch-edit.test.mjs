@@ -91,10 +91,10 @@ test('方向键保持相对间距，左右半竖线，上下一横线，左右�
   assert.equal(nudgeSelection(session, 'ArrowLeft', 4, 11), true); assert.equal(session.chart, original);
 });
 
-test('控制球预览不修改原谱和历史，移动整体约束边界，跨线循环且可撤销', () => {
+test('控制球预览不修改原谱和历史，移动支持无限延展坐标，跨线循环且可撤销', () => {
   const session = fixture(); const original = structuredClone(session.chart); const snapshot = captureSelection(session);
   const preview = controlSelection(snapshot, 'note-move', { deltaBeat: 0.5, deltaX: 800 });
-  assert.deepEqual(preview.chart.judgeLineList[0].notes.map(note => note.positionX), [375, 675]);
+  assert.deepEqual(preview.chart.judgeLineList[0].notes.map(note => note.positionX), [600, 900]);
   assert.deepEqual(session.chart, original); assert.equal(session.history.undoStack.length, 0);
   const transferred = controlSelection(snapshot, 'note-line', { dragX: -50 });
   assert.equal(transferred.lineIndex, 1); assert.equal(transferred.chart.judgeLineList[0].notes.length, 0);
@@ -113,14 +113,14 @@ test('音符整体移动吸附时只量化位移，不改变各音符的相对�
   assert.deepEqual(unsnapped.chart.judgeLineList[0].notes.map(note => note.positionX), [-130, 170]);
 });
 
-test('缩放球使用中心轴，按 1/2 固定首尾音符，向内拖可翻转且约束边界', () => {
+test('缩放球使用中心轴，按 1/2 固定首尾音符，向内拖可翻转且不约束横坐标', () => {
   const snapshot = captureSelection(fixture());
   const positions = options => controlSelection(snapshot, 'note-scale', options).chart.judgeLineList[0].notes.map(note => note.positionX);
   assert.deepEqual(positions({ dragX: 300 }), [-350, 250]);
   assert.deepEqual(positions({ dragX: 300, anchorMode: 1 }), [-200, 400]);
   assert.deepEqual(positions({ dragX: -300, anchorMode: 2 }), [-500, 100]);
   assert.deepEqual(positions({ dragX: -600 }), [100, -200]);
-  assert.ok(positions({ dragX: 10000 }).every(position => Math.abs(position) <= 675));
+  assert.deepEqual(positions({ dragX: 10000 }), [-5200, 5100]);
 });
 
 test('事件控制球整体平移保持长度，第二球调尾第三球调首，只有第一球横向达到阈值才移线', () => {

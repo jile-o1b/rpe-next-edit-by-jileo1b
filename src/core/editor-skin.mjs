@@ -6,11 +6,17 @@ export const EDITOR_SKIN_COMPONENTS = Object.freeze({
   root: ':root', app: 'body', header: 'header', brand: '.brand', 'document-name': '#document-name', 'file-actions': 'header nav',
   transport: '.transport', 'transport-actions': '.transport-group', workspace: '.workspace', editor: '.editor', toolbar: '.editor-toolbar',
   tools: '.tools', 'view-controls': '.view-controls-inline', 'timeline-header': '.timeline-head', stage: '.stage',
+  'direct-placement-toggle': '#direct-placement-enabled', 'direct-placement-close': '#close-direct-placement',
+  'direct-placement': '.direct-placement', 'direct-placement-surface': '.direct-placement-surface', 'preview-line-picker': '.preview-line-picker',
+  'note-tracking-tool': '#note-tracking-tool', 'note-tracking-panel': '#note-tracking-editor', 'agent-images': '.agent-image-list',
+  'placement-defaults': '#placement-defaults-panel', 'placement-defaults-menu': '#timeline-placement-defaults',
+  'diagnostics-panel': '[data-panel="diagnose"]', 'diagnose-deep': '#diagnose-deep', 'diagnose-target': '#diagnose-target',
   'editor-actions': '.editor-footer', inspector: '.inspector', 'inspector-tabs': '.inspector-tabs', 'chart-tools': '[data-panel="chart"] .action-grid',
   'project-home': '#home', 'project-list': '#project-cards', footer: 'body > footer', status: '#status', notifications: '#notifications',
   dialog: '#modal', settings: '#settings-modal', 'settings-body': '.settings-body', 'theme-settings': '#editor-skin-settings',
   'settings-header': '.settings-header', 'settings-navigation': '.settings-nav', 'settings-navigation-item': '.settings-nav-item', 'settings-search': '#settings-search', 'settings-category': '.settings-category', 'settings-card': '.settings-card',
   'language-settings': '#language-settings', 'language-select': '#ui-language',
+  'about-settings': '#about-settings', 'app-version': '#app-version', 'update-progress': '#update-progress', 'update-notes': '#update-notes', 'update-dialog': '#update-dialog',
   'dictation-settings': '#dictation-settings', 'dictation-indicator': '.dictation-indicator', 'dictation-candidate': '.dictation-candidate', 'dictation-permission': '.dictation-permission-dialog',
   'note-skin-settings': '#note-skin-settings', 'note-skins-open': '#note-skins-open', 'note-skin-manager': '#note-skin-modal', 'note-skin-gallery': '.note-skin-gallery',
   'mod-manager': '#mod-manager', 'mod-list': '.mod-manager-list', 'mod-details': '.mod-manager-details', 'mod-status': '#mods-status', 'mod-warning': '#mod-import-warning',
@@ -40,7 +46,7 @@ export const EDITOR_SKIN_MOVABLE = ['new', 'open', 'save', 'export', 'library', 
   'curve-notes', 'curve-trajectory', 'text-lines-tool', 'noise-fit-tool', 'noise-tracking-tool', 'multi-line-tool', 'diagnose', 'history-panel', 'collaboration-tool', 'version-control-tool',
   'seek', 'notes-only', 'game-ui', 'reset-camera', 'mute-current-line', 'tools', 'view-controls', 'view-buttons', 'line-controls', 'beat-controls',
   'offset-control', 'rate-control', 'pitch-control', 'time-readouts', 'multi-line-controls', 'tab-notes', 'tab-events', 'tab-lines', 'tab-chart', 'tab-noise',
-  'tool-select', 'tool-tap', 'tool-hold', 'tool-flick', 'tool-drag', 'global-events-tool', 'ai-tool'];
+  'tool-select', 'tool-tap', 'tool-hold', 'tool-flick', 'tool-drag', 'global-events-tool', 'ai-tool', 'note-tracking-tool'];
 export const EDITOR_SKIN_CANVASES = Object.freeze({ notes: '#notes', events: '#events', 'global-events': '#global-events-canvas', 'global-density': '.global-event-density', noise: '#noise-editor-canvas', density: '#note-density', history: '#history-strip', audio: '#audio-analysis-overlay', selection: '.selection-overlay', 'batch-preview': '', easing: '.easing-preview', bezier: '.bezier-editor', curve: '.curve-preview', 'text-lines': '.text-lines-preview', trajectory: '.trajectory-preview,.trajectory-preset-thumbnail', 'noise-fit': '.noise-fit-source', 'line-thumbnail': '.line-switcher-card canvas', 'clipboard-thumbnail': '.clipboard-thumbnail' });
 export const EDITOR_SKIN_BUILTINS = Object.freeze(Object.fromEntries(['folder', 'save', 'setting', 'help', 'play', 'replay', 'showback', 'jump', 'copy', 'shear', 'paste', 'delete0', 'switch', 'layout', 'return', 'info', 'waves', 'bezier', 'addline', 'mute'].map(name => [name, `rpe/Texture/icon/${name}.png`])));
 export const EDITOR_SKIN_IMPORTANT = /^(?:--(?:rpen|skin)-[a-z0-9-]+|color|background(?:-[a-z-]+)?|border(?:-[a-z-]+)?|outline(?:-[a-z-]+)?|font(?:-[a-z-]+)?|line-height|letter-spacing|text-[a-z-]+|width|height|min-width|max-width|min-height|max-height|padding(?:-[a-z-]+)?|margin(?:-[a-z-]+)?|gap|row-gap|column-gap|flex(?:-[a-z-]+)?|grid(?:-[a-z-]+)?|order|box-shadow|filter)$/;

@@ -10,6 +10,18 @@ AI发送栏的 `.agent-route-toggle` 将模型与推理档位合并显示，`.ag
 
 当前界面契约版本为 **API 3**。旧的 v1 清单继续有效；使用 API 2 能力（响应式规则、参数、变体等）的皮肤应声明 `"compatibility":{"minApi":2}`，在画布色板中引用参数（API 3）的皮肤应声明 `"minApi":3`。API 版本针对编辑器皮肤接口，与应用版本、皮肤自身版本和文件协议 version 各自独立。
 
+兼容增加 `@note-tracking-tool`、`@note-tracking-panel` 和 `@agent-images`。音符追踪页面名为 `note-tracking`，属于从谱面工具打开的临时页面；墨线将入口放入生成组。Agent 图片使用 `.agent-image-list/.agent-image-card/.agent-image-open/.agent-image-remove`，保留缩略图的可辨识性、移除按钮和放大预览，不加载远程 Markdown 图片。横向间距设置的字段为 `note-spacing`，只改变音符坐标映射，不影响资源包贴图尺寸。`notes-only-note-scale` 仅缩放单线仅音符视图中的音符视觉宽高，默认 0.9，不改变坐标映射。
+
+右键默认值设置增加 `@placement-defaults-menu`（入口）及 `@placement-defaults`（浮动面板）。面板包含 `.placement-defaults-tabs` 的 `role=tab` 按钮、`.placement-defaults-body` 与 `.placement-defaults-reset`；当前页签通过 `aria-selected=true` 标识，输入控件以 `data-rpen-field` 标识属性。颜色、判定颜色和打击音效复用音符属性控件。应保留两个页签、重置和关闭的可用性，并允许内容在窗口高度不足时滚动。
+
+谱面检查增加 `@diagnostics-panel`、`@diagnose-deep`、`@diagnose-target`。`.diagnose-actions` 放置目标格式和深度检查/取消按钮，`.diagnose-state` 显示后台进度，`.diagnose-item[data-diagnostic-code]` 标识检查类型。结果按严重性和物件类别分组、分批展开；不要把“显示更多”或深度检查的进行中状态隐藏。检查不得由皮肤动画或重新布局自动触发。
+
+物件类别下的 `.diagnose-type[data-diagnostic-type]` 按具体问题类型再次分组，折叠状态会保留。定位时检查面板继续显示，左侧使用 `.diagnostic-highlight` SVG 覆盖层临时描出目标物件，`.diagnostic-highlight-outline` 的虚线沿边移动约数秒；覆盖层无指针事件，不应改变其相对 stage 的定位或尺寸，也不应让其影响画布布局。动画只更新该覆盖层，不触发谱面画布重绘。报错文案显示实际检测值，不重复显示规则阈值。
+
+直接放置沿用 API 3，新增 `@direct-placement-toggle`（工具栏开关）、`@direct-placement-close`（退出按钮）、`@direct-placement`（预览中的裁剪容器）、`@direct-placement-surface`（旋转编辑面）与 `@preview-line-picker`（重合线列表）。开启后原 `#notes` 画布临时移入编辑面，继续沿用 `notes` 画布色板，关闭后放回原位；皮肤应按画布自身定位，不依赖父元素层级，不覆盖编辑面或画布运行时管理的位置、尺寸和 transform。重合线列表的每项只显示线号与 alpha，保留应用控制的显隐。
+
+工具栏开关显示“直接放置音符”，右侧退出按钮显示“× 放置”。展开区的背景和网格不透明度由应用设置控制（默认 0.5），编辑音符与控制点不随背景变淡；不要对整个编辑面或画布加 opacity 来实现背景透明。应用将预览音符临时降至 30%，退出后恢复。上下双区沿判定线汇合并独立裁剪，位置偏差的对应音符用细虚线连接；此映射由编辑器维护，皮肤不要覆盖画布 transform。工具栏提供只读布局变量 `--rpen-placement-align-gap`，表示放置控件与上方拍数控件左端对齐所需的 margin-left；墨线采用此变量，并保留最小间距。窗口或控件尺寸变化时更新，空间不足时保留控件之间的间距。
+
 本文描述已经实现的能力。结构校验参见 [`schemas/editor-skin-v1.schema.json`](../schemas/editor-skin-v1.schema.json)，组件、变量及静态控件清单参见 [`schemas/editor-skin-components.v1.json`](../schemas/editor-skin-components.v1.json)。最终导入还会进行文件、引用、CSS、图片和字体校验；只通过 JSON Schema 不代表包一定有效。
 
 ## 1. 范围与设计原则
@@ -183,7 +195,9 @@ tokens 是初始默认值，不是只能读取的常量。可在 `@root` 状态/
 | `notifications` | `#notifications` |
 | `dialog` / `settings` / `settings-body` | `#modal` / `#settings-modal` / `.settings-body` |
 | `settings-header` / `settings-navigation` / `settings-navigation-item` / `settings-search` | 设置页头、左侧分类导航、分类链接、搜索框；当前分类链接带 `aria-current="location"`，滚动与点击同步 |
-| `settings-category` / `settings-card` | 连续滚动的分类区块、原设置分组；分类用 `data-settings-section` 标识，值为 `general`、`appearance`、`editor`、`preview`、`audio`、`input`、`storage`、`compatibility`。搜索仅临时隐藏未匹配分组，不移除控件及状态 |
+| `settings-category` / `settings-card` | 连续滚动的分类区块、原设置分组；分类用 `data-settings-section` 标识，值为 `general`、`appearance`、`editor`、`preview`、`audio`、`input`、`storage`、`compatibility`、`about`。搜索仅临时隐藏未匹配分组，不移除控件及状态 |
+| `about-settings` / `app-version` | 关于设置卡片、底栏版本按钮；版本按钮在发现新版时附带“有新版本”并具有 `has-update` 类，点击定位到关于页 |
+| `update-progress` / `update-notes` / `update-dialog` | 原生下载进度条、默认折叠的更新日志、下载完成及安装确认对话框；进度用 `value/max` 表达，不确定时移除 `value`。皮肤仅改变呈现，不改写下载地址、校验、权限或安装过程 |
 | `language-settings` / `language-select` | `#language-settings` / `#ui-language`，语言分类与选择控件 |
 | `dictation-settings` / `dictation-indicator` / `dictation-candidate` / `dictation-permission` | 本地语音输入设置、按住说话状态浮层、可复制结果、麦克风授权与系统权限说明面板；听写状态浮层不改变当前输入焦点 |
 | `theme-settings` | `#editor-skin-settings` |

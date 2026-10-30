@@ -45,14 +45,14 @@ test('重叠分类按线、拍数、横坐标及朝向隔离，假音符和 Drag
     { ...createNote(1, 0.5, 0), above: 0 }, { ...createNote(1, 0.5, 0), isFake: 1 },
     { ...createNote(1, 0.5, 0), isFake: true }, { ...createNote(1, 0.5, 0), isFake: '1' },
     { ...createNote(1, 0.5, 0), startTime: [0, 2, 4] },
-    { ...createNote(2, 1, 700), endTime: [0, 0, 1], isFake: true },
-    { ...createNote(4, 1, 700), endTime: [0, 0, 1] }];
+    { ...createNote(2, 1, 701), endTime: [0, 0, 1], isFake: true },
+    { ...createNote(4, 1, 701), endTime: [0, 0, 1] }];
   chart.judgeLineList.push({ ...line, notes: [createNote(1, 0.5, 0)] });
   const issues = diagnose(chart);
   assert.deepEqual(issues.filter(issue => issue.message === '同位置同时音符重叠').map(issue => [issue.line, issue.index]), [[0, 7]]);
   for (const index of [8, 9]) {
     assert.ok(issues.some(issue => issue.index === index && issue.message === '结束拍早于开始拍'));
-    assert.ok(issues.some(issue => issue.index === index && issue.message === '音符超出标准横向范围'));
+    assert.equal(issues.some(issue => issue.index === index && issue.message === '音符超出标准横向范围'), index === 9);
   }
 });
 

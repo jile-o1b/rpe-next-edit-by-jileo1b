@@ -1,6 +1,7 @@
 import { AGENT_PERMISSIONS, agentAbort, checkAgentSignal } from '../core/agent-commands.mjs';
 import { AGENT_CORE_TOOLS, AGENT_COMPACTION_PROMPT, AGENT_MEMORY_PREFIX, estimateAgentTokens, prepareAgentHistory, agentContextCut, trimAgentImages, agentContextPolicy, agentContextUsage } from '../core/agent-context.mjs';
 import { t } from '../i18n.mjs';
+import { agentImages, agentUserMessage } from '../core/agent-images.mjs';
 
 export class EditorAgent extends EventTarget {
   constructor({ commands, providers, context, config, approve, ask, prompt, now = () => performance.now() }) {
@@ -9,21 +10,22 @@ export class EditorAgent extends EventTarget {
   elapsedMs() { return this.busy ? Math.max(0, this.now() - this.startedClock) : this.lastDurationMs ?? 0; }
   event(type, detail) { this.dispatchEvent(new CustomEvent(type, { detail })); }
   stop() { this.controller?.abort(); }
-  steer(text) {
-    if (!this.busy || !text.trim()) return false;
-    this.steering.push(text.trim()); if (this.requestPurpose !== 'compaction') this.requestController?.abort('steering'); this.toolController?.abort('steering'); return true;
+  steer(text, images = []) {
+    if (!this.busy || !text.trim() && !images.length) return false;
+    this.steering.push({ text: text.trim(), images: agentImages(images) }); if (this.requestPurpose !== 'compaction') this.requestController?.abort('steering'); this.toolController?.abort('steering'); return true;
   }
   reset() { this.stop(); this.messages = []; this.log = []; this.steering = []; this.event('reset', {}); }
-  async run(text, { history, instruction = '', compactOnly = false } = {}) {
+  async run(text, { history, instruction = '', compactOnly = false, images = [] } = {}) {
     if (this.busy) throw Error(t('agent.s358f884'));
-    if (!text.trim() && !compactOnly) return;
+    images = agentImages(images);
+    if (!text.trim() && !compactOnly && !images.length) return;
     const config = { ...this.config() }; if (!AGENT_PERMISSIONS.includes(config.permission)) throw Error(t('agent.s8614dbf'));
     const provider = this.providers.get(config.provider); if (!config.key?.trim()) throw Error(t('agent.s4e05b06'));
     const owner = this.context().session; if (!owner) throw Error(t('agent.s21c0425'));
     const controller = new AbortController(); this.controller = controller; this.startedClock = this.now(); this.busy = true; this.steering = [];
     const runId = crypto.randomUUID();
     let messages = prepareAgentHistory(history ?? this.messages), transcript = [], checkpoint = structuredClone(messages), checkpointTranscript = [], compacted = false;
-    if (!compactOnly) { const user = { role: 'user', content: text }; messages.push(user); transcript.push(user); checkpoint = structuredClone(messages); checkpointTranscript = structuredClone(transcript); }
+    if (!compactOnly) { const user = agentUserMessage(text, images, runId); messages.push(user); transcript.push(user); checkpoint = structuredClone(messages); checkpointTranscript = structuredClone(transcript); }
     this.turnMessages = checkpointTranscript;
     const statistics = { model: config.model, provider: provider.name ?? config.provider, profile: config.profileName, reasoningEffort: config.thinking === false ? 'none' : config.reasoningEffort, startedAt: Date.now(), durationMs: 0, requestMs: 0, requests: 0, tools: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, reasoningTokens: 0, cachedTokens: 0, usageKnown: false, compactions: 0 };
     let status = 'failed', success = false, system = '', lastRequestMs = 0, currentInstruction = text;
@@ -101,7 +103,7 @@ export class EditorAgent extends EventTarget {
       checkpoint = structuredClone(messages); return true;
     };
     const steer = () => {
-      for (const value of this.steering.splice(0)) { currentInstruction = value; const message = { role: 'user', content: value }; messages.push(message); transcript.push(message); this.event('steering', { text: value }); }
+      for (const item of this.steering.splice(0)) { const value = typeof item === 'string' ? { text: item, images: [] } : item; if (value.images.length && !capabilities.images) throw Error(t('agent-images.unsupported')); currentInstruction = value.text; const message = agentUserMessage(value.text, value.images, runId); messages.push(message); transcript.push(message); this.event('steering', { text: value.text }); }
       checkpoint = structuredClone(messages); checkpointTranscript = structuredClone(transcript);
       this.turnMessages = checkpointTranscript;
     };
@@ -109,7 +111,8 @@ export class EditorAgent extends EventTarget {
     try {
       if (provider.modelInfo) { try { capabilities = { ...capabilities, ...await provider.modelInfo(config, { signal: controller.signal }) }; } catch (error) { checkAgentSignal(controller.signal); } }
       policy = agentContextPolicy(config, capabilities); budget = policy.threshold;
-      trimAgentImages(messages, Boolean(capabilities.images)); checkpoint = structuredClone(messages);
+      if (images.length && !capabilities.images) throw Error(t('agent-images.unsupported'));
+      trimAgentImages(messages, Boolean(capabilities.images), runId); checkpoint = structuredClone(messages);
       system = this.prompt() + t('agent.s1f13b73') + JSON.stringify(this.context().summary) + t('agent.s112fe43') + config.permission + t('agent.s2078fe0') + JSON.stringify(capabilities) + '\n' + instruction;
       reportContext();
       if (compactOnly) {
@@ -165,7 +168,7 @@ export class EditorAgent extends EventTarget {
           if (image && capabilities.images) images.push({ role: 'user', content: [{ type: 'text', text: t('agent.sa72ef18') + call.function.name + t('agent.s4d1f0a3') }, { type: 'image_url', image_url: { url: image } }] });
         }
         messages.push(...images); transcript.push(...images);
-        trimAgentImages(messages, Boolean(capabilities.images));
+        trimAgentImages(messages, Boolean(capabilities.images), runId);
         this.messages = checkpoint = structuredClone(messages); checkpointTranscript = structuredClone(transcript);
         this.turnMessages = checkpointTranscript;
         if (this.steering.length) steer();

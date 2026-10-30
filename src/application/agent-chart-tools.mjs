@@ -5,6 +5,7 @@ import { TempoMap } from '../core/tempo.mjs';
 import { CURVE_PRESETS, TRAJECTORY_DEFAULTS, presetOptions, editableTrajectoryOptions } from '../core/curve-trajectory.mjs';
 import { generateCurveNotes } from '../core/curve-notes.mjs';
 import { trackedNoiseArea, noiseTrackingChart } from '../core/noise-tracking.mjs';
+import { trackedNoteEvents, noteTrackingChart } from './note-tracking.mjs';
 import { NOISE_REVEALS } from '../core/noise-fit.mjs';
 import { noiseLayers } from '../core/noise-skin.mjs';
 import { validateColumnEvent } from '../core/global-events.mjs';
@@ -47,6 +48,7 @@ export const AGENT_CHART_TOOLS = Object.freeze([
   { id: 'text-lines-tool', name: t('agent-chart-tools.s23acb5a'), commands: ['text_fit'] },
   { id: 'noise-fit-tool', name: t('agent-chart-tools.s9835372'), commands: ['noise_fit'] },
   { id: 'noise-tracking-tool', name: t('agent-chart-tools.sd5825e9'), commands: ['noise_track'] },
+  { id: 'note-tracking-tool', name: t('note-track.title'), commands: ['note_track'] },
   { id: 'multi-line-tool', name: t('agent-chart-tools.s5255093'), commands: ['multi_line', 'chart_query', 'chart_transform'] },
   { id: 'global-events-tool', name: t('agent-chart-tools.s895a20e'), commands: ['global_events'] },
   { id: 'diagnose', name: t('agent-chart-tools.s000a07b'), commands: ['diagnose'] },
@@ -57,6 +59,11 @@ export const AGENT_CHART_TOOLS = Object.freeze([
 export function registerAgentChartTools(commands, editor, { current, check, prepareChart, fit = runPatternFit, textRaster = rasterizeTextLines, noiseRaster = rasterizeNoisePattern }) {
   const register = (name, description, parameters, access, prepare) => commands.register({ name, description, parameters, access, prepare });
   const presets = () => [...CURVE_PRESETS, ...(editor.trajectoryPanel?.custom ?? [])];
+  register('note_track', t('note-track.help'), agentSchema({ revision: agentText, start: beat, end: beat, target: agentSchema({ lineIndex: agentIndex, noteIndex: agentIndex }, ['lineIndex', 'noteIndex']), line: integer(-1, 100000), layer: layerNumber, rotation: boolean, sampleRate: choice([60, 120, 240]), replace: boolean }, ['revision', 'start', 'end', 'target']), 'edit', args => {
+    const chart = check(args), tempo = new TempoMap(chart.BPMList), generated = trackedNoteEvents(chart, tempo, { ...args, start: time(args.start), end: time(args.end), lineIndex: args.line ?? editor.session.lineIndex, layer: args.layer ?? editor.timeline?.layer ?? editor.session.eventLayer ?? 0, lineDefaults: editor.session.lineEventDefaults });
+    const next = noteTrackingChart(chart, generated, args.replace === true, tempo);
+    return prepareChart(args, chart, next, t('note-track.title'), { line: generated.lineIndex, layer: generated.layer, events: [...generated.tracks.values()].reduce((sum, entries) => sum + entries.length, 0) }, args.replace === true);
+  });
   register('chart_tools', t('agent-chart-tools.sf3fa163'), agentSchema(), 'read', () => ({ apply: () => AGENT_CHART_TOOLS.map(tool => ({ ...tool, commands: tool.commands.filter(name => commands.entries.has(name)) })) }));
   register('trajectory_presets', t('agent-chart-tools.sd9df6ae'), agentSchema({ query: agentText }), 'read', args => ({ apply: () => presets().filter(entry => !args.query || [entry.name, entry.id, entry.category].some(value => value?.toLowerCase().includes(args.query.toLowerCase()))).map(entry => ({ ...entry, options: presetOptions(entry) })) }));
   register('trajectory_generate', t('agent-chart-tools.sc5d76a3'), agentSchema({ revision: agentText, line: agentIndex, layer: layerNumber, start: beat, end: beat, preset: agentText, options: trajectoryOptions, segments: integer(4, 8192), split: splitSchema, output: choice(['trajectory', 'events']), eventIndex: agentIndex, replace: boolean }, ['revision', 'line', 'start', 'end']), 'edit', args => {
@@ -77,7 +84,7 @@ export function registerAgentChartTools(commands, editor, { current, check, prep
   });
   register('curve_notes', t('agent-chart-tools.s7906f9d'), agentSchema({ revision: agentText, line: agentIndex, start: beat, end: beat, startX: agentNumber, endX: agentNumber, type: choice([1, 3, 4]), division: integer(1, 100), density: number(.001, 1000), easingType: integer(1, 29) }, ['revision', 'line', 'start', 'end', 'startX', 'endX']), 'edit', args => {
     const chart = check(args), line = chart.judgeLineList[args.line]; if (!line) throw Error(t('agent-chart-tools.s7a90672'));
-    const notes = generateCurveNotes({ startTime: time(args.start), endTime: time(args.end), startX: args.startX, endX: args.endX, type: args.type ?? 4, division: args.division ?? editor.timeline.division ?? 4, density: args.density ?? 1, easingType: args.easingType ?? 1 });
+    const notes = generateCurveNotes({ startTime: time(args.start), endTime: time(args.end), startX: args.startX, endX: args.endX, type: args.type ?? 4, division: args.division ?? editor.timeline.division ?? 4, density: args.density ?? 1, easingType: args.easingType ?? 1, noteDefaults: editor.session.noteDefaults });
     if (!notes.length) throw Error(t('agent-chart-tools.sfbba660'));
     const next = { ...chart, judgeLineList: chart.judgeLineList.map((entry, index) => index === args.line ? { ...entry, notes: [...(entry.notes ?? []), ...notes].sort((left, right) => beatValue(left.startTime) - beatValue(right.startTime)), numOfNotes: (entry.notes?.length ?? 0) + notes.length } : entry) };
     return prepareChart(args, chart, next, t('agent-chart-tools.sae195fe'), { line: args.line, count: notes.length });

@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { extractReleaseZip, verifyReleaseSourceDirectory, verifyReleaseSourceZip } from './release-source.mjs';
 import { EDITOR_PACKAGE_SOURCES, SERVER_PACKAGE_SOURCES } from './package-sources.mjs';
 import { macOSAdHocSignOptions, verifyMacOSAdHocSigning } from './macos-signing.mjs';
+import { prepareUpdatePackage } from '../desktop/update-package.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const kind = process.argv.includes('--server') ? 'server' : 'editor';
@@ -182,6 +183,16 @@ if (platform === 'darwin') {
 }
 const digest = createHash('sha256'); for await (const chunk of createReadStream(archive)) digest.update(chunk);
 const bytes = (await stat(archive)).size;
-const manifest = { ...buildInfo, file: basename(archive), bytes, sha256: digest.digest('hex'), unpackedBytes: await directoryBytes(directory), removedLocaleBytes, sourceFilesVerified, verified: true, ...(macOSVerification ? { macOSVerification } : {}) };
+const sha256 = digest.digest('hex');
+let updateVerification;
+if (kind === 'editor') {
+  const prepared = await prepareUpdatePackage({ archive, sha256, release: { version: metadata.version }, platform, arch, output: join(work, 'update-verification') });
+  const application = join(prepared.source, platform === 'darwin' ? 'Contents/Resources/app' : 'resources/app');
+  await verifyReleaseSourceDirectory(root, sourceCommit, sourcePaths, application);
+  const installedExecutable = join(prepared.source, platform === 'darwin' ? 'Contents/MacOS/RePhiEdit-Next' : platform === 'win32' ? 'RePhiEdit-Next.exe' : 'RePhiEdit-Next');
+  await smokeApplication(installedExecutable, join(work, 'update-test-profile'));
+  updateVerification = { packagePrepared: true, sourceVerified: true, applicationStarts: true };
+}
+const manifest = { ...buildInfo, file: basename(archive), bytes, sha256, unpackedBytes: await directoryBytes(directory), removedLocaleBytes, sourceFilesVerified, verified: true, ...(macOSVerification ? { macOSVerification } : {}), ...(updateVerification ? { updateVerification } : {}) };
 await writeFile(join(output, stem + '.json'), JSON.stringify(manifest, null, 2) + '\n');
 console.log(JSON.stringify(manifest));

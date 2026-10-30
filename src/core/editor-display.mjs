@@ -61,8 +61,8 @@ export function eventChains(events) {
   return groups;
 }
 
-export function simultaneousNotes(chart, tempo) {
-  const counts = new Map(); const times = new Map();
+export function simultaneousNotes(chart, tempo, counts = new Map()) {
+  counts.clear(); const times = new Map();
   for (const line of chart.judgeLineList ?? []) for (const note of line.notes ?? []) {
     const time = Math.round(tempo.seconds(note.startTime, line.bpmfactor ?? 1) * 1000000);
     times.set(note, time); counts.set(time, (counts.get(time) ?? 0) + 1);

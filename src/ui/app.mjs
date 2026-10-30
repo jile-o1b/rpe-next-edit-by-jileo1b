@@ -3,17 +3,20 @@
 import '../platform/locale-bootstrap.mjs';
 import { EditorSession } from '../application/session.mjs';
 import { FrameLimiter, validFpsLimit } from '../core/frame-timing.mjs';
-import { assertChart, createChart, diagnose, EVENT_TYPES, previewLimitations } from '../core/chart.mjs';
+import { assertChart, createChart, EVENT_TYPES, previewLimitations } from '../core/chart.mjs';
 import { beatValue, parseBeat, formatBeat, fromNumber, upperBound } from '../core/beat.mjs';
 import { TempoMap } from '../core/tempo.mjs';
 import { AudioTransport } from '../platform/audio.mjs';
-import { openFiles, assetBytes, resourceReferences, attachExternalEffects } from '../platform/files.mjs';
+import { openFiles, assetBytes, resourceReferences, attachExternalEffects, assetPath } from '../platform/files.mjs';
 import { showExportDialog } from './export-dialog.mjs';
 import { showImportDialog } from './import-dialog.mjs';
 import { readChartImport } from '../platform/chart-import.mjs';
 import { listDrafts, readDraft, saveSnapshot } from '../platform/recovery.mjs';
 import { Timeline, prepareCanvas } from './timeline.mjs';
 import { Preview } from './preview.mjs';
+import { PreviewLinePicker } from './preview-line-picker.mjs';
+import { DirectPlacement } from './direct-placement.mjs';
+import { QuickCurve } from './quick-curve.mjs';
 import { renderProperties, disposeNoteProperties } from './inspector.mjs';
 import { showDialog, editJson, choose, confirmAction, dialogOpen } from './dialog.mjs';
 import { migratePreferences, shortcutAction, shortcutReleased, shortcutMatches, DEFAULT_HOTKEYS } from '../core/preferences.mjs';
@@ -25,7 +28,7 @@ import { VersionControlPanel } from './version-control.mjs';
 import { migrationDialog } from './migration-dialog.mjs';
 import { LinePanel } from './line-panel.mjs';
 import { AssetLibraryPanel } from './asset-library.mjs';
-import { remapAssetReferences } from '../platform/asset-library.mjs';
+import { remapAssetReferences, assetReference } from '../platform/asset-library.mjs';
 import { HELP_TEXT } from './help.mjs';
 import { download } from '../platform/files.mjs';
 import { RpeSkin } from './skin.mjs';
@@ -42,6 +45,12 @@ import { renderClipboardHistory } from './clipboard-history.mjs';
 import { PasteGesture } from './paste-gesture.mjs';
 import { SelectionOverlay } from './selection-overlay.mjs';
 import { SelectionIntervalPanel } from './selection-interval.mjs';
+import { PlacementDefaultsPanel } from './placement-defaults.mjs';
+import { ChartDiagnostics } from '../platform/chart-diagnostics.mjs';
+import { DiagnosticsPanel } from './diagnostics-panel.mjs';
+import { DiagnosticHighlight } from './diagnostic-highlight.mjs';
+import { diagnosticKey } from '../core/chart-diagnostics.mjs';
+import { createPlacedLine, normalizeNoteDefaults, normalizeLineDefaults } from '../core/placement-defaults.mjs';
 import { LineSwitcher } from './line-switcher.mjs';
 import { stepLine } from '../core/line-overview.mjs';
 import { applyNumberShortcut } from '../application/number-shortcuts.mjs';
@@ -78,6 +87,7 @@ import { TrajectoryPanel } from './trajectory-panel.mjs';
 import { TextLinesPanel } from './text-lines.mjs';
 import { NoiseFitPanel } from './noise-fit.mjs';
 import { NoiseTrackingPanel } from './noise-tracking.mjs';
+import { NoteTrackingPanel } from './note-tracking.mjs';
 import { CollaborationPanel } from './collaboration.mjs';
 import { NoiseAreaEditor } from './noise-area.mjs';
 import { EventSampler } from './event-sampler.mjs';
@@ -100,6 +110,7 @@ import { AgentPanel } from './agent-panel.mjs';
 import { AudioSources } from '../application/audio-sources.mjs';
 import { AudioOnsets } from '../application/audio-onsets.mjs';
 import { mapperTiming } from '../core/audio-mapper.mjs';
+import { AboutUpdates } from './about-updates.mjs';
 
 document.documentElement.lang = currentLocale().locale;
 
@@ -151,6 +162,10 @@ const displayFields = [
   ['rpe-event-drag', 'rpeEventDrag', DEFAULT_EDITOR_PREFERENCES.rpeEventDrag],
   ['default-line-thickness', 'lineScale', 1.5],
   ['line-switcher-enabled', 'lineSwitcher', true],
+  ['overlapping-line-picker', 'overlappingLinePicker', DEFAULT_EDITOR_PREFERENCES.overlappingLinePicker],
+  ['placement-opacity', 'placementOpacity', DEFAULT_EDITOR_PREFERENCES.placementOpacity],
+  ['note-spacing', 'noteSpacing', DEFAULT_EDITOR_PREFERENCES.noteSpacing],
+  ['notes-only-note-scale', 'notesOnlyNoteScale', DEFAULT_EDITOR_PREFERENCES.notesOnlyNoteScale],
   ['clipboard-history-enabled', 'clipboardHistory', true],
   ['bar-width', 'barWidth', DEFAULT_SETTINGS.barWidth], ['bar-alpha', 'barAlpha', DEFAULT_SETTINGS.barAlpha], ['event-value-size', 'eventValueSize', 13], ['event-value-threshold', 'eventValueThreshold', 30], ['event-curve-threshold', 'eventCurveThreshold', 24], ['event-opacity', 'eventOpacity', 0.25], ['event-bar-width', 'eventBarWidth', DEFAULT_EDITOR_PREFERENCES.eventBarWidth], ['seamless-events', 'seamlessEvents', true],
   ['background-blur', 'backgroundBlur', 10.5], ['scroll-speed', 'scrollSpeed', 5], ['tips-enabled', 'tipsEnabled', true], ['success-notifications', 'successNotifications', true],
@@ -218,6 +233,8 @@ let lastSelectionSignature = '';
 let editTimeSeconds = 0;
 let editClockTick = performance.now();
 let lastDiagnosticSignature = null;
+let diagnosticAssetRevision = 0;
+let diagnosticNavigation = false;
 const audio = new AudioTransport();
 const hitSounds = new HitSounds(audio, { onWarning: message => notify(message, 'warning', 7000) });
 const preview = new Preview(element('#preview'));
@@ -237,7 +254,7 @@ const noiseEditor = new NoiseAreaEditor(element('#noise-panel'), element('#noise
   onContextMenu: event => openTimelineContextMenu(event),
   pause: () => playback.pause(), seek: beat => seekBeat(beat), wheel: event => previewWheel(event),
   getAssets: () => assets,
-  onAssets: entries => { for (const [name, bytes] of entries) assets.set(name, bytes); assetDirty = true; images.load(session.chart, assets, chartName); invalidate(); },
+  onAssets: entries => { for (const [name, bytes] of entries) assets.set(name, bytes); assetDirty = true; diagnosticAssetRevision++; images.load(session.chart, assets, chartName); invalidate(); },
 });
 const globalEventRegistry = new GlobalEventRegistry();
 registerPlaceholderGlobalEvent(globalEventRegistry);
@@ -247,6 +264,10 @@ const globalEvents = new GlobalEventsEditor(element('#global-events-panel'), ele
 const selectionIntervalPanel = new SelectionIntervalPanel(element('#selection-interval'), () => editorPreferences.selectionInterval ?? 1, value => {
   editorPreferences.selectionInterval = value; timeline.selectionInterval = globalEvents.timeline.selectionInterval = value;
   persistEditor(); invalidate();
+});
+const placementDefaultsPanel = new PlacementDefaultsPanel(() => ({ session, assets, chartName, volume: hitSounds.volume }), {
+  writeLineDefaults: values => { session.lineEventDefaults = values; editorPreferences.lineEventDefaults = values; persistEditor(); },
+  invalidate, reportError: error => reportError(error),
 });
 for (const renderer of [preview, realtimePreview]) {
   renderer.noisePreview.hiddenLayers = noiseEditor.hiddenLayers;
@@ -314,7 +335,7 @@ const stopMultiLineScrollDrag = event => {
 timeline.multiLineScrollElement.addEventListener('pointerup', stopMultiLineScrollDrag);
 timeline.multiLineScrollElement.addEventListener('pointercancel', stopMultiLineScrollDrag);
 timeline.multiLineScrollElement.addEventListener('lostpointercapture', stopMultiLineScrollDrag);
-const batchControls = new BatchControls(element('.stage'), timeline, () => session, () => !atHome && !preview.visible && !noiseEditor.active && !globalEvents.active, error => reportError(error));
+const batchControls = new BatchControls(element('.stage'), timeline, () => session, () => !atHome && (!preview.visible || directPlacement.active) && !noiseEditor.active && !globalEvents.active, error => reportError(error));
 const multiEdit = new MultiEditPanel(element('#multi-editor'), () => session, timeline, {
   close: () => activatePane('chart'), invalidate, notify: (message, severity) => notify(message, severity),
 });
@@ -322,8 +343,21 @@ const trajectoryPanel = new TrajectoryPanel(element('#trajectory-editor'), () =>
 const textLinesPanel = new TextLinesPanel(element('#text-lines-editor'), () => ({ session, tempo, seconds: chartSeconds(), skin, noteSize: preview.noteSize }), { invalidate, notify, activate: activatePane });
 const noiseFitPanel = new NoiseFitPanel(element('#noise-fit-editor'), element('.stage'), () => ({ session, tempo, timeline, previewVisible: preview.visible, seconds: () => chartSeconds() }), { invalidate, notify, activate: activatePane, pause: () => playback.pause() });
 const noiseTrackingPanel = new NoiseTrackingPanel(element('#noise-tracking-editor'), element('.stage'), () => ({ session, tempo, timeline, preview, realtimePreview, previewVisible: preview.visible, seconds: () => chartSeconds(), wheel: event => previewWheel(event) }), { invalidate, notify, activate: activatePane, pause: () => playback.pause() });
+const noteTrackingPanel = new NoteTrackingPanel(element('#note-tracking-editor'), element('.stage'), () => ({ session, tempo, timeline, preview, realtimePreview, previewVisible: preview.visible, seconds: () => chartSeconds(), wheel: event => previewWheel(event) }), { invalidate, notify, activate: activatePane, pause: () => playback.pause() });
 const multiLinePanel = new MultiLinePanel(element('#multi-line-editor'), () => session, { timeline, render: renderSession, notify, persist: persistEditor });
 const linePanel = new LinePanel(element('#line-panel'), () => session, { render: renderSession, notify, getAssets: () => assets, getChartName: () => chartName, afterTexture: () => images.load(session.chart, assets, chartName) });
+const diagnostics = new ChartDiagnostics(() => ({ chart: session.chart, assets, assetRevision: diagnosticAssetRevision, chartName,
+  duration: audio.buffer || audio.media?.src ? audio.duration : undefined, registry: globalEventRegistry, ratio: preview.aspectRatio ?? 1.5,
+  activeMods: [...(globalThis.rpenMods?.runtime.loaded ?? [])].filter(([, state]) => state.status === 'loaded').map(([id]) => id), modRevision: [...(globalThis.rpenMods?.runtime.loaded ?? [])].map(([id, state]) => id + ':' + state.status).join('|') }));
+const diagnosticPanel = new DiagnosticsPanel(diagnostics, { visible: () => activePaneName === 'diagnose', remove: deleteDiagnosticIssue, locate: locateDiagnosticIssue });
+const diagnosticHighlight = new DiagnosticHighlight(element('.stage'), () => ({ session, home: atHome }));
+diagnostics.addEventListener('change', () => {
+  if (diagnostics.pending) return;
+  const errors = diagnostics.issues.filter(issue => issue.severity === 'error'), signature = new Set(errors.map(diagnosticKey));
+  if (lastDiagnosticSignature && activePaneName !== 'diagnose') { const added = errors.filter(issue => !lastDiagnosticSignature.has(diagnosticKey(issue))); if (added.length) notify(t('app.sd10d488', { p0: added.length }), 'error', 4200); }
+  lastDiagnosticSignature = signature;
+});
+globalEventRegistry.addEventListener('change', () => { diagnostics.update(); });
 const editorSkins = new EditorSkins(element('#editor-skin-settings'), { invalidate, notify });
 const noteSkins = new NoteSkins(element('#note-skin-settings'), { skin, hitSounds, audio, invalidate, notify, settings: settingsDialog, pause: () => playback.pause() });
 document.addEventListener('rpen-editor-skin-changed', () => {
@@ -334,8 +368,13 @@ document.addEventListener('rpen-note-skin-changed', () => { if (textLinesPanel.a
 const assetLibrary = new AssetLibraryPanel(element('#asset-library'), () => ({ assets, folders: assetFolders, chart: session.chart, chartName, previewVolume: hitSounds.volume }), {
   notify,
   onChange: (nextAssets, nextFolders, paths) => {
+    const sound = session.noteDefaults.hitsound, oldSoundPath = sound ? assetPath(assets, sound, chartName) : null;
+    if (sound) {
+      const path = paths?.get(oldSoundPath) ?? oldSoundPath;
+      session.noteDefaults = { ...session.noteDefaults, hitsound: path && nextAssets.has(path) ? assetReference(nextAssets, path, chartName) : '' };
+    }
     const nextChart = remapAssetReferences(session.chart, assets, nextAssets, paths, chartName);
-    assets = nextAssets; assetFolders = new Set(nextFolders ?? []); assetDirty = true;
+    assets = nextAssets; assetFolders = new Set(nextFolders ?? []); assetDirty = true; diagnosticAssetRevision++;
     if (nextChart !== session.chart) session.commit(t('app.s66f5500'), nextChart);
     hitSounds.chart = session.chart; hitSounds.setAssets(assets, chartName); if (audio.playing) hitSounds.prepare().catch(reportError);
     images.load(session.chart, assets, chartName); status(t('app.s61fc662')); renderSession();
@@ -347,6 +386,11 @@ const assetLibrary = new AssetLibraryPanel(element('#asset-library'), () => ({ a
 });
 const clipboardHistory = new ClipboardHistory();
 const selectionOverlay = new SelectionOverlay(element('.stage'), timeline);
+const linePicker = new PreviewLinePicker();
+const directPlacement = new DirectPlacement(element('.preview-wrap'), timeline, batchControls,
+  () => ({ session, preview, tempo, seconds: chartSeconds() }), { pause: () => playback.pause(), changed: invalidate,
+    closed: () => { element('#close-direct-placement').hidden = true; }, reportError: error => reportError(error) });
+const quickCurve = new QuickCurve(timeline, () => ({ session, tempo, enabled: !atHome && (!preview.visible || directPlacement.active) && !noiseEditor.active && !globalEvents.active && !curveEditorOpen && !mods?.runtime.locks.size }), { pause: () => playback.pause(), invalidate, notify: (...args) => notify(...args) });
 const lineSwitcher = new LineSwitcher(element('.stage'), () => ({
   chart: session.chart, tempo, seconds: chartSeconds(), selected: session.lineIndex,
   layer: timeline.layer, extended: timeline.extended,
@@ -362,7 +406,7 @@ const pasteGesture = new PasteGesture({
   paste: context => { try { pasteObjects(session, context.beat, { ...timeline.clipboardMode, targetLineIndex: clipboardTargetLine() }); } catch (error) { reportError(error); } },
   open: () => { activatePane('clipboard'); renderClipboardPanel(); },
   reportError: error => notify(t('app.s70852e2', { p0: error.message }), 'error'),
-  valid: context => context.session === session && context.chart === session.chart && context.layer === timeline.layer && !atHome && !preview.visible && !dialogOpen() && !isTextEntry(document.activeElement),
+  valid: context => context.session === session && context.chart === session.chart && context.layer === timeline.layer && !atHome && (!preview.visible || directPlacement.active) && !dialogOpen() && !isTextEntry(document.activeElement),
 });
 window.addEventListener('blur', () => pasteGesture.cancel());
 document.addEventListener('focusin', event => { if (isTextEntry(event.target)) pasteGesture.cancel(); });
@@ -575,7 +619,7 @@ const collaboration = new CollaborationPanel(element('#collaboration-panel'), ()
     activatePane('collaboration');
   },
   receiveAsset: async (name, bytes) => {
-    assets.set(name, bytes); assetDirty = true; images.load(session.chart, assets, chartName);
+    assets.set(name, bytes); assetDirty = true; diagnosticAssetRevision++; images.load(session.chart, assets, chartName);
     const references = resourceReferences(session.chart, assets, chartName);
     if (name === references.song || name === session.chart.META.song) await loadMusic(bytes, name, false);
     hitSounds.setProject(session.chart, assets, chartName); renderSession();
@@ -596,6 +640,7 @@ const autoSave = new AutoSaveClock(async () => {
   if (current === session) { lastDraftDocument = document; lastDraftAssets = media; lastDraftFolders = folders; status(t('app.s43755f3')); notify(t('app.s0d49e0d'), 'success'); }
 }, error => { const message = t('app.sf83f150', { p0: storageFailure(error) }); status(message); notify(message, 'error', 7000); });
 timeline.onWheel = event => {
+  if (directPlacement.active) { event.stopPropagation(); previewWheel(event); return; }
   if (event.ctrlKey) {
     if (event.deltaY) {
       if (lineSwitcher.enabled) { lineSwitcher.step(event.deltaY); lineSwitcher.show(); }
@@ -613,27 +658,49 @@ function selectOverviewLine(index) {
 }
 const previewWheel = event => {
   event.preventDefault();
+  linePicker.hide();
   playback.wheel(event, { ...preferences.settings, scrollSpeed: editorPreferences.scrollSpeed ?? preferences.settings.scrollSpeed, wheelInputMode: editorPreferences.wheelInputMode ?? preferences.settings.wheelInputMode, wheelStopAtAudioStart: editorPreferences.wheelStopAtAudioStart ?? preferences.settings.wheelStopAtAudioStart ?? true }, performance.now() / 1000);
 };
 element('.preview-wrap').addEventListener('wheel', previewWheel, { passive: false });
 const pickPreviewLine = (renderer, event) => {
+  if (directPlacement.active) return false;
+  const matches = renderer.pickLines(event.clientX, event.clientY);
+  const select = index => {
+    if (!session.chart.judgeLineList[index] || !renderer.visible) return;
+    timeline.cancelPlacement();
+    if (editorPreferences.directPlacement && renderer === preview) {
+      if (noiseEditor.active) noiseEditor.close(); if (globalEvents.active) globalEvents.close();
+      eventSampler.finish(false); trajectoryPanel.hide(); textLinesPanel.hide(); noiseFitPanel.hide(); noiseTrackingPanel.hide(); noteTrackingPanel.hide();
+      if (curveEditorOpen) closeCurvePanel();
+      session.selectLine(index); directPlacement.open(index); element('#close-direct-placement').hidden = !directPlacement.active;
+    } else session.selectLine(index);
+    clearNoteSourceToast(); invalidate();
+  };
+  if ((editorPreferences.overlappingLinePicker ?? true) && matches.length > 1) {
+    const pickedSession = session, chart = session.chart;
+    linePicker.show(matches, event, index => { if (session === pickedSession && session.chart === chart) select(index); }); return true;
+  }
   const index = renderer.pick(event.clientX, event.clientY);
   if (index === null) return false;
-  timeline.cancelPlacement(); session.selectLine(index); return true;
+  select(index); return true;
 };
 element('#preview').addEventListener('click', event => {
-  if (!preview.visible) return;
+  if (!preview.visible || directPlacement.active) return;
   if (noiseTrackingPanel.sampling) { noiseTrackingPanel.pick(event); return; }
+  if (noteTrackingPanel.sampling) { noteTrackingPanel.pick(event); return; }
   const noiseIndex = preview.pickNoiseArea(event.clientX, event.clientY);
   if (Number.isInteger(noiseIndex)) {
     clearNoteSourceToast(); togglePreview(false, true); openNoisePanel(); noiseEditor.select(noiseIndex); noiseEditor.areaList.reveal(noiseIndex); return;
   }
+  if ((editorPreferences.directPlacement || (editorPreferences.overlappingLinePicker ?? true) && preview.pickLines(event.clientX, event.clientY).length > 1) && pickPreviewLine(preview, event)) return;
   const noteLine = preview.pickNote(event.clientX, event.clientY);
   if (Number.isInteger(noteLine)) { timeline.cancelPlacement(); session.selectLine(noteLine); clearNoteSourceToast(); invalidate(); return; }
   pickPreviewLine(preview, event);
 });
 element('#preview').addEventListener('pointermove', event => {
+  if (directPlacement.active || linePicker.active) { clearNoteSourceToast(); return; }
   if (noiseTrackingPanel.sampling) { clearNoteSourceToast(); return; }
+  if (noteTrackingPanel.sampling) { clearNoteSourceToast(); return; }
   if (!preview.visible || (editorPreferences.noteSourceHover ?? preferences.settings.noteSourceHover ?? true) === false) { clearNoteSourceToast(); return; }
   const lineIndex = preview.pickNote(event.clientX, event.clientY);
   if (!Number.isInteger(lineIndex)) { clearNoteSourceToast(); return; }
@@ -714,9 +781,14 @@ subscribeLibrary(change => {
 });
 
 function setHome(visible) {
+  if (visible) diagnosticHighlight.clear();
+  if (visible) { placementDefaultsPanel.hide(); session.noteDefaults = normalizeNoteDefaults(); diagnostics.reset(); lastDiagnosticSignature = null; }
+  if (visible) quickCurve.cancel();
+  if (visible) { linePicker.hide(); directPlacement.close(); }
   if (visible) agentPanel?.reset();
   if (visible) audioSources.reset(audio.buffer);
   if (visible && noiseTrackingPanel.sampling) noiseTrackingPanel.endSample();
+  if (visible && noteTrackingPanel.sampling) noteTrackingPanel.endSample();
   if (visible && collaboration.client.active) collaboration.client.leave();
   atHome = visible;
   if (!visible && hasDocument) agentPanel?.attach(versionRepoId);
@@ -756,11 +828,13 @@ function renderTimelineMarkers() {
 function openTimelineContextMenu(event, canvas = null, markerIndex = null) {
   const menu = element('#timeline-context-menu'); if (!menu) return;
   selectionIntervalPanel.hide();
+  placementDefaultsPanel.hide();
   const point = canvas ? timeline.point(event, canvas) : null;
   pendingTimelineMenu = { time: point ? timeline.timeAt(point.y) : null, markerIndex };
   element('#timeline-add-marker').hidden = !canvas;
   element('#timeline-delete-marker').hidden = markerIndex === null;
   element('#timeline-selection-interval').hidden = markerIndex !== null;
+  element('#timeline-placement-defaults').hidden = markerIndex !== null;
   element('#timeline-selection-interval').textContent = t('app.s3f3831b', { p0: timeline.selectionInterval ?? 1 });
   const selections = session.multiLineActive && session.multiLineMode === 'events'
     ? [...session.multiEventSelection].flatMap(([lineIndex, keys]) => [...keys].map(key => ({ lineIndex, key })))
@@ -797,6 +871,9 @@ element('#timeline-delete-marker').addEventListener('click', deleteTimelineMarke
 element('#timeline-selection-interval').addEventListener('click', () => {
   const bounds = element('#timeline-context-menu').getBoundingClientRect(); closeTimelineContextMenu(); selectionIntervalPanel.open(bounds.left, bounds.top);
 });
+element('#timeline-placement-defaults').addEventListener('click', () => {
+  const bounds = element('#timeline-context-menu').getBoundingClientRect(); closeTimelineContextMenu(); placementDefaultsPanel.open(bounds.left, bounds.top);
+});
 
 function persistEditor() {
   editorPreferences = { ...editorPreferences, scale: timeline.scale, division: timeline.division, gridCount: timeline.gridCount, snapX: timeline.snapX, judgementOffset: timeline.judgementOffset, multiLineWidth: timeline.multiLineWidth || undefined, multiLineEventWidth: timeline.multiLineEventWidth || undefined,
@@ -807,6 +884,7 @@ function persistEditor() {
 }
 
 function activatePane(name) {
+  if (diagnosticNavigation && name !== 'diagnose') return;
   if (activePaneName === 'assets' && name !== 'assets') assetLibrary.disposeUrls();
   if (name !== 'notes') disposeNoteProperties();
   if (name === 'global-event-properties' && (!globalEvents.active || globalEvents.selection.size !== 1)) name = 'global-events';
@@ -817,6 +895,7 @@ function activatePane(name) {
   if (name !== 'text-lines') textLinesPanel.hide();
   if (name !== 'noise-fit') noiseFitPanel.hide();
   if (name !== 'noise-tracking') noiseTrackingPanel.hide();
+  if (name !== 'note-tracking') noteTrackingPanel.hide();
   activePaneName = name;
   editorSkinState({ pane: name });
   noiseEditor.syncChrome();
@@ -833,9 +912,10 @@ for (const button of document.querySelectorAll('[data-pane]')) button.onclick = 
   activatePane(pane);
   if (pane === 'lines') linePanel.render();
 };
-function openMultiLinePanel() { if (globalEvents.active) globalEvents.close(); activatePane('multi-line'); multiLinePanel.render(); }
-function openNoisePanel() { if (globalEvents.active) globalEvents.close(); timeline.cancelPlacement(); batchControls.cancel(); pasteGesture.cancel(); multiEdit.hide(); trajectoryPanel.hide(); curveEditorOpen = false; noiseEditor.open(); }
+function openMultiLinePanel() { directPlacement.close(); if (globalEvents.active) globalEvents.close(); activatePane('multi-line'); multiLinePanel.render(); }
+function openNoisePanel() { directPlacement.close(); if (globalEvents.active) globalEvents.close(); timeline.cancelPlacement(); batchControls.cancel(); pasteGesture.cancel(); multiEdit.hide(); trajectoryPanel.hide(); curveEditorOpen = false; noiseEditor.open(); }
 function openGlobalEvents() {
+  directPlacement.close();
   if (noiseEditor.active) noiseEditor.close();
   eventSampler.finish?.(false); timeline.cancelPlacement(); batchControls.cancel(); pasteGesture.cancel(); multiEdit.hide(); trajectoryPanel.hide(); curveEditorOpen = false;
   globalEvents.open();
@@ -843,6 +923,8 @@ function openGlobalEvents() {
 }
 const globalEventsTool = document.createElement('button'); globalEventsTool.id = 'global-events-tool'; globalEventsTool.textContent = t('app.s895a20e'); element('#noise-areas-tool').after(globalEventsTool);
 const aiTool = document.createElement('button'); aiTool.id = 'ai-tool'; aiTool.textContent = t('app.s9efe3ea'); element('#history-panel').before(aiTool);
+const noteTrackingTool = document.createElement('button'); noteTrackingTool.id = 'note-tracking-tool'; noteTrackingTool.textContent = t('note-track.title'); element('#noise-tracking-tool').after(noteTrackingTool);
+noteTrackingTool.onclick = () => { directPlacement.close(); quickCurve.cancel(); if (noiseEditor.active) noiseEditor.close(); if (globalEvents.active) globalEvents.close(); eventSampler.finish(false); timeline.cancelPlacement(); batchControls.cancel(); pasteGesture.cancel(); curveEditorOpen = false; noteTrackingPanel.open(); };
 globalEventsTool.onclick = openGlobalEvents;
 element('#close-global-events').onclick = () => { globalEvents.close(); renderSession(); };
 element('#noise-areas-tool').addEventListener('click', openNoisePanel);
@@ -851,6 +933,7 @@ element('#noise-tab').addEventListener('click', () => { activatePane('noise'); n
 element('#multi-line-tool').addEventListener('click', openMultiLinePanel);
 element('#multi-line-open').addEventListener('click', openMultiLinePanel);
 element('#multi-line-toggle').addEventListener('click', () => {
+  directPlacement.close();
   const enabling = !session.multiLineEnabled;
   session.setMultiLineEnabled(enabling, session.focus === 'events' ? 'events' : 'notes');
   if (enabling) openMultiLinePanel();
@@ -865,6 +948,8 @@ for (const form of document.querySelectorAll('#properties, #event-properties')) 
 for (const button of document.querySelectorAll('[data-icon]')) button.style.setProperty('--icon', `url('${assetUrl(`rpe/Texture/icon/${button.dataset.icon}.png`)}')`);
 function togglePreview(force, stay = false, replay = false, { autoplay = true } = {}) {
   const visible = force ?? !preview.visible;
+  linePicker.hide();
+  if (!visible) directPlacement.close();
   if (visible) clearNoteSourceToast();
   if (visible && (!preview.visible || replay)) {
     previewReturnTime = audio.time; timeline.cancelPlacement();
@@ -1021,18 +1106,12 @@ function renderSession() {
   if (lineGroup) { const line = session.line; lineGroup.textContent = line && !isDefaultLineGroup(session.chart, line) ? lineGroupName(session.chart, line) : ''; lineGroup.title = lineGroup.textContent ? t('app.s595b038', { p0: lineGroup.textContent }) : ''; }
   if (activePaneName === 'lines') linePanel.render();
   updateLayerButtons();
-  const liveIssues = diagnose(session.chart);
-  const liveSignature = liveIssues.map(issue => `${issue.severity}:${issue.path}:${issue.message}`).sort().join('|');
-  if (lastDiagnosticSignature !== null && liveSignature !== lastDiagnosticSignature && activePaneName !== 'diagnose') {
-    const previous = new Set(lastDiagnosticSignature.split('|').filter(Boolean));
-    const addedErrors = liveIssues.filter(issue => issue.severity === 'error' && !previous.has(`${issue.severity}:${issue.path}:${issue.message}`));
-    if (addedErrors.length) notify(t('app.sd10d488', { p0: addedErrors.length }), 'error', 4200);
-  }
-  lastDiagnosticSignature = liveSignature;
+  diagnostics.update();
   if (activePaneName === 'diagnose') renderDiagnostics();
   if (activePaneName === 'history') renderHistoryPanel();
   if (activePaneName === 'multi') multiEdit.sync();
   if (noiseTrackingPanel.active) noiseTrackingPanel.sync();
+  if (noteTrackingPanel.active) noteTrackingPanel.sync();
   if (activePaneName === 'multi-line') multiLinePanel.render();
   if (noiseEditor.active) noiseEditor.render();
   if (globalEvents.active) globalEvents.render();
@@ -1056,7 +1135,8 @@ function renderSession() {
       : (session.multiLineActive && session.multiLineMode === 'notes'
         ? [...(session.multiLineSelection ?? new Map()).values()].reduce((total, values) => total + values.size, 0)
         : session.selection.size);
-    if (globalEvents.active) globalEvents.render();
+    if (activePaneName === 'diagnose') {}
+    else if (globalEvents.active) globalEvents.render();
     else if (noiseEditor.active) noiseEditor.render();
     else if (multiEdit.committing) multiEdit.sync();
     else if (activePaneName === 'collaboration') collaboration.renderState();
@@ -1064,6 +1144,7 @@ function renderSession() {
     else if (textLinesPanel.active) textLinesPanel.sync();
     else if (noiseFitPanel.active) noiseFitPanel.sync();
     else if (noiseTrackingPanel.active) noiseTrackingPanel.sync();
+    else if (noteTrackingPanel.active) noteTrackingPanel.sync();
     else if (trajectoryPanel.active && selectionCount !== 1) activatePane('trajectory');
     else if (curveEditorOpen) activatePane('curve');
     else if (activePaneName === 'clipboard') renderClipboardPanel();
@@ -1090,6 +1171,11 @@ function renderSession() {
 session.addEventListener('change', renderSession);
 
 function replaceChart(chart, name, nextAssets = new Map(), nextFolders = [], options = {}) {
+  diagnosticHighlight.clear();
+  diagnostics.reset(); lastDiagnosticSignature = null;
+  placementDefaultsPanel.hide();
+  quickCurve.cancel();
+  linePicker.hide(); directPlacement.close();
   chart = normalizeLineGroups(chart);
   agentPanel?.reset();
   assertChart(chart);
@@ -1099,6 +1185,7 @@ function replaceChart(chart, name, nextAssets = new Map(), nextFolders = [], opt
   globalEvents.reset();
   noiseFitPanel.reset();
   noiseTrackingPanel.reset();
+  noteTrackingPanel.reset();
   if (!collaborationJoining && collaboration.client.active) collaboration.client.leave();
   lineSwitcher.reset();
   disposeNoteProperties(); assetLibrary.disposeUrls();
@@ -1106,7 +1193,7 @@ function replaceChart(chart, name, nextAssets = new Map(), nextFolders = [], opt
   audioAnalysis.setBuffer(null);
   hitSounds.stop(); hitSounds.onlyCurrentLine = false; element('#mute-current-line').setAttribute('aria-pressed', 'false'); element('#mute-current-line').classList.remove('active'); images.clear(); libraryProject = null;
   session.removeEventListener('change', renderSession);
-  session = new EditorSession(chart);
+  session = new EditorSession(chart, { lineEventDefaults: editorPreferences.lineEventDefaults });
   if (options.dirty) session.history.markUnsaved();
   clipboardHistory.attach(session);
   lastSelectionSignature = '';
@@ -1189,12 +1276,12 @@ async function loadMusic(bytes, name, updateMetadata = true, recordHistory = tru
   const loaded = await audio.load(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength), name);
   if (!loaded || session !== loadingSession) return false;
   audioAnalysis.setBuffer(audio.buffer);
-  assets.set(name, bytes);
+  assets.set(name, bytes); diagnosticAssetRevision++;
   element('#music-name').textContent = name;
   element('#scrubber').max = audio.duration;
   renderTimelineMarkers();
   if (updateMetadata) {
-    assetDirty = true;
+    assetDirty = true; diagnosticAssetRevision++;
     if (recordHistory) session.commit(t('app.s47261a4'), { ...session.chart, META: { ...session.chart.META, song: name } });
     else session.replaceMusicResource(name);
   }
@@ -1289,7 +1376,9 @@ function editEvent(type, index, beat = currentBeat()) {
   status(timeline.eventInteraction.pending ? t('app.s5d00864') : t('app.sbf92ebb'));
 }
 
-listen('#new', () => guardReplace(() => replaceChart(createChart(), 'chart.json')));
+listen('#new', () => guardReplace(() => {
+  const chart = createChart(); chart.judgeLineList = [createPlacedLine('Line 1', editorPreferences.lineEventDefaults)]; replaceChart(chart, 'chart.json');
+}));
 listen('#home-new', () => element('#new').click());
 listen('#home-open', () => element('#open').click());
 listen('#home-migrate', () => element('#migrate').click());
@@ -1394,6 +1483,14 @@ element('#y-scale-slider').addEventListener('input', event => {
   timeline.scale = Number(event.target.value); element('#y-scale').value = timeline.scale; persistEditor(); invalidate();
 });
 element('#snap-x').addEventListener('change', event => { timeline.snapX = event.target.checked; persistEditor(); invalidate(); });
+function toggleDirectPlacement() {
+  editorPreferences.directPlacement = !editorPreferences.directPlacement;
+  element('#direct-placement-enabled').checked = editorPreferences.directPlacement;
+  if (!editorPreferences.directPlacement) directPlacement.close();
+  linePicker.hide(); persistEditor(); invalidate();
+}
+element('#direct-placement-enabled').addEventListener('change', toggleDirectPlacement);
+listen('#close-direct-placement', () => directPlacement.close());
 function updateLayerButtons() {
   const container = element('#layer');
   if (!container.children.length) for (let index = 0; index <= MAX_BASE_LAYERS; index++) {
@@ -1617,49 +1714,62 @@ function deleteDiagnosticIssue(issue) {
   else return;
   session.commit(t('app.s634fa27'), chart); notify(t('app.s1788c09'), 'success');
 }
-function renderDiagnostics() {
-  const host = element('#diagnose-results'); if (!host) return;
-  host.replaceChildren();
-  const issues = diagnose(session.chart); const visible = element('#diagnose-show-low')?.checked !== false;
-  const signature = issues.map(issue => `${issue.severity}:${issue.path}:${issue.message}`).sort().join('|');
-  if (lastDiagnosticSignature !== null && signature !== lastDiagnosticSignature) {
-    const previous = new Set(lastDiagnosticSignature.split('|').filter(Boolean));
-    const added = issues.filter(issue => !previous.has(`${issue.severity}:${issue.path}:${issue.message}`));
-    if (added.some(issue => issue.severity === 'error')) notify(t('app.s8d9e4b5', { p0: added.filter(issue => issue.severity === 'error').length }), 'error', 4200);
-    else if (added.some(issue => issue.severity === 'warning')) notify(t('app.sf801b1e', { p0: added.filter(issue => issue.severity === 'warning').length }), 'warning', 3600);
-  }
-  lastDiagnosticSignature = signature;
-  const category = issue => {
-    const top = issue.noiseArea !== undefined ? t('app.s81b3bb2') : issue.path.startsWith('notes[') ? t('app.s7ac3289') : issue.path.match(/Events\[/) ? t('app.s550e328') : t('app.s1a26edf');
-    const sub = issue.message.includes(t('app.s53bf944')) ? t('app.sdf2ad20') : issue.message.includes(t('app.s00ddbc0')) ? t('app.s00ddbc0') : issue.message.includes(t('app.s29d0552')) ? t('app.s29d0552') : issue.message.includes(t('app.s2249d71')) ? t('app.s2249d71') : t('app.s1a26edf');
-    return [top, sub];
-  };
-  for (const [severity, title] of [['error', t('app.sb859c7b')], ['warning', t('app.s5521e36')], ['info', t('app.sab3656a')]]) {
-    const list = issues.filter(issue => issue.severity === severity && (visible || severity !== 'info'));
-    const details = document.createElement('details'); details.className = `diagnose-group ${severity}`; details.open = true;
-    const summary = document.createElement('summary'); summary.textContent = `${title}（${list.length}）`; details.append(summary);
-    const groupedIssues = new Map();
-    for (const issue of list) { const [kind, sub] = category(issue); if (!groupedIssues.has(kind)) groupedIssues.set(kind, new Map()); if (!groupedIssues.get(kind).has(sub)) groupedIssues.get(kind).set(sub, []); groupedIssues.get(kind).get(sub).push(issue); }
-    for (const [kind, subgroups] of groupedIssues) {
-      const parent = document.createElement('details'); parent.className = 'diagnose-subgroup'; parent.open = true;
-      const parentSummary = document.createElement('summary'); parentSummary.textContent = `${kind}（${[...subgroups.values()].reduce((sum, entries) => sum + entries.length, 0)}）`; parent.append(parentSummary);
-      for (const [sub, grouped] of subgroups) {
-        const subgroup = document.createElement('details'); subgroup.className = 'diagnose-subgroup'; subgroup.open = true;
-        const subsummary = document.createElement('summary'); subsummary.textContent = `${sub}（${grouped.length}）`; subgroup.append(subsummary);
-        for (const issue of grouped) {
-          const row = document.createElement('div'); row.className = `diagnose-item ${severity}`;
-          const locate = document.createElement('button'); locate.type = 'button'; locate.textContent = t('app.s42c758e', { p0: issue.noiseArea !== undefined ? t('app.s3a2d2c2') + issue.noiseArea : 'Line ' + issue.line, p1: issue.beat, p2: issue.message });
-          locate.onclick = () => { if (issue.noiseArea !== undefined) { openNoisePanel(); noiseEditor.select(issue.noiseArea, issue.noiseTrack ? { type: issue.noiseTrack, index: issue.index } : null); } else session.selectLine(issue.line); seekBeat(issue.beat); };
-          const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = t('app.s3755f56'); remove.disabled = !issue.path.includes('[') && issue.path !== 'father'; remove.onclick = () => deleteDiagnosticIssue(issue);
-          row.append(locate, remove); subgroup.append(row);
-        }
-        parent.append(subgroup);
+function renderDiagnostics() { diagnostics.update(); diagnosticPanel.render(); }
+function locateDiagnosticIssue(issue) {
+  if (issue.asset) { activatePane('assets'); assetLibrary.selected = assetPath(assets, issue.asset, chartName); assetLibrary.render(); return; }
+  diagnosticNavigation = true;
+  let geometry;
+  try {
+    if (preview.visible) togglePreview(false, true);
+    directPlacement.close();
+    if (issue.globalType) {
+      if (noiseEditor.active) noiseEditor.close(); openGlobalEvents();
+      const column = globalEvents.document.columns.find(entry => entry.type.id === issue.globalType && (!issue.globalColumn || entry.column.id === issue.globalColumn));
+      if (column && issue.index !== undefined) {
+        globalEvents.document.editor.eventSelection = new Set([column.key + ':' + issue.index]); globalEvents.document.notify();
+        const columnIndex = globalEvents.document.columns.indexOf(column); globalEvents.sync();
+        const bounds = globalEvents.geometry[columnIndex];
+        if (bounds) globalEvents.canvas.parentElement.scrollLeft = Math.max(0, bounds.left - (globalEvents.canvas.parentElement.clientWidth - bounds.width) / 2);
+        const event = column.events[issue.index];
+        if (event) geometry = () => [globalEvents.timeline.diagnosticEventBounds(column.key, event)].filter(Boolean);
       }
-      details.append(parent);
+    } else if (issue.noiseArea !== undefined) {
+      openNoisePanel(); noiseEditor.select(issue.noiseArea, issue.noiseTrack ? { type: issue.noiseTrack, index: issue.index } : null);
+      geometry = () => [noiseEditor.diagnosticBounds(issue.noiseArea, issue.noiseTrack, issue.index)].filter(Boolean);
+    } else if (session.chart.judgeLineList[issue.line]) {
+      if (noiseEditor.active) noiseEditor.close(); if (globalEvents.active) globalEvents.close();
+      const shaderIndex = issue.path.match(/^effects\.(\d+)/)?.[1];
+      let shader;
+      if (shaderIndex !== undefined) {
+        const roots = [session.chart.effects, session.chart.shaderEvents, session.chart.META?.effects].filter(Array.isArray).flat();
+        const raw = roots[Number(shaderIndex)], events = shaderEvents(session.chart, issue.line);
+        const index = events.findIndex(event => event.vars === raw?.vars && event.shader === raw?.shader && event.order === raw?.order); if (index >= 0) shader = [null, 'paintEvents', String(index)];
+      }
+      const match = shader ?? issue.path.match(/^(\w+Events)\[(\d+)\]/) ?? (issue.eventType ? [null, issue.eventType, null] : null), noteIndex = issue.path.match(/^notes\[(\d+)\]/)?.[1], note = noteIndex !== undefined ? session.chart.judgeLineList[issue.line].notes[Number(noteIndex)] : null;
+      const area = match ? 'events' : 'notes';
+      if (session.multiLineActive && (session.multiLineMode !== area || !session.isTargetLine(issue.line))) session.setMultiLineEnabled(false);
+      if (match) { timeline.extended = Boolean(issue.extended || shader); if (issue.layer !== undefined && !issue.extended && !shader) timeline.layer = issue.layer; if (timeline.notesOnly) element('#notes-only').click(); }
+      session.selectLine(issue.line);
+      if (session.multiLineActive && timeline.panelCount(area) > 1) { const canvas = area === 'events' ? timeline.eventsCanvas : timeline.notesCanvas; timeline.multiLineScroll[area] = timeline.panelIndex(issue.line, area) * timeline.panelStride(canvas.clientWidth, area); }
+      if (note) {
+        const x = timeline.noteHorizontal(note.positionX, issue.line), width = timeline.notesCanvas.clientWidth;
+        if (x < 16 || x > width - 16) { element('#camera-x').value = note.positionX; element('#camera-x').dispatchEvent(new Event('change', { bubbles: true })); }
+        geometry = () => !noiseEditor.active && !globalEvents.active && (session.lineIndex === issue.line || session.isTargetLine(issue.line)) ? [timeline.diagnosticNoteBounds(note, issue.line)] : [];
+      } else if (match) {
+        const type = match[1], event = match[2] === null ? { startTime: [0, 0, 1], endTime: [0, 0, 1] } : eventList(session, type)[Number(match[2])];
+        if (event) geometry = () => !noiseEditor.active && !globalEvents.active && (session.lineIndex === issue.line || session.isTargetLine(issue.line)) ? [timeline.diagnosticEventBounds(type, event, issue.line)].filter(Boolean) : [];
+      }
+      geometry ??= () => [{ canvas: timeline.notesCanvas, x: timeline.panelHorizontal(0, issue.line, timeline.notesCanvas.clientWidth, 'notes'), y: timeline.baseline() - 4, width: timeline.panelWidth(timeline.notesCanvas.clientWidth, 'notes'), height: 8 }];
     }
-    host.append(details);
-  }
-  if (!issues.length) { const empty = document.createElement('p'); empty.className = 'hint'; empty.textContent = t('app.sad38555'); host.append(empty); }
+    const factor = issue.globalType || issue.noiseArea !== undefined ? 1 : session.chart.judgeLineList[issue.line]?.bpmfactor ?? 1;
+    playback.seek(tempo.seconds(Number.isFinite(issue.beat) ? issue.beat : 0, factor) + offsetSeconds());
+    // Seek updates the edit clock synchronously; refresh the origin and layer
+    // chrome before drawing the focused object's outline.
+    renderSession();
+  } finally { diagnosticNavigation = false; }
+  activatePane('diagnose');
+  if (geometry) diagnosticHighlight.show(issue, geometry);
+  invalidate();
 }
 listen('#diagnose', () => { activatePane('diagnose'); renderDiagnostics(); });
 element('#diagnose-show-low').addEventListener('change', renderDiagnostics);
@@ -1782,9 +1892,14 @@ window.addEventListener('keydown', async event => {
   if (atHome || !hasDocument || dialogOpen() || usesNativeTextShortcut(event)) return;
   if (batchControls.active) { event.preventDefault(); return; }
   const area = globalEvents.active ? 'events' : timeline.hoverArea ?? session.focus;
-  const hasMultiSelection = [...(session.multiLineSelection?.values() ?? [])].some(values => values.size) || [...(session.multiEventSelection?.values() ?? [])].some(values => values.size);
+  const hasMultiSelection = session.multiLineActive && ([...(session.multiLineSelection?.values() ?? [])].some(values => values.size) || [...(session.multiEventSelection?.values() ?? [])].some(values => values.size));
   const hasSelection = globalEvents.active ? globalEvents.selection.size > 0 : noiseEditor.active ? noiseEditor.selection.size > 0 : Boolean(session.selection.size || session.eventSelection.size || hasMultiSelection);
-  const action = shortcutAction(event, preferences, area, { hasSelection: hasSelection && !preview.visible });
+  const action = shortcutAction(event, preferences, area, { hasSelection: hasSelection && (!preview.visible || directPlacement.active) });
+  if (action === 'Esc' && (linePicker.active || directPlacement.active)) {
+    if (linePicker.active) linePicker.hide(); else directPlacement.close();
+    event.preventDefault(); event.stopImmediatePropagation(); return;
+  }
+  if (linePicker.active) return;
   if (action === 'DragLong') {
     if (timeline.rpeEventDrag === true && !preview.visible && !isTextEntry(event.target)) { setEventEndpointDragHeld(true); event.preventDefault(); event.stopImmediatePropagation(); }
     return;
@@ -1795,20 +1910,22 @@ window.addEventListener('keydown', async event => {
   }
   if (noiseFitPanel.action(action)) { event.preventDefault(); event.stopImmediatePropagation(); return; }
   if (noiseTrackingPanel.action(action)) { event.preventDefault(); event.stopImmediatePropagation(); return; }
+  if (noteTrackingPanel.action(action)) { event.preventDefault(); event.stopImmediatePropagation(); return; }
   if (noiseEditor.active && (!preview.visible || noiseEditor.sampleMode)) {
     try { if (noiseEditor.action(action)) { event.preventDefault(); event.stopImmediatePropagation(); return; } }
     catch (error) { event.preventDefault(); reportError(error); return; }
   }
     if (action || ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) releaseShortcutFocus(target);
   if (pasteGesture.pending && action !== 'Paste') pasteGesture.cancel();
-    if (action === 'Paste' && clipboardHistory.enabled && !preview.visible && shortcutMatches(event, preferences.hotkeys.ClipboardHistory ?? DEFAULT_HOTKEYS.ClipboardHistory)) {
+    if (action === 'Paste' && clipboardHistory.enabled && (!preview.visible || directPlacement.active) && shortcutMatches(event, preferences.hotkeys.ClipboardHistory ?? DEFAULT_HOTKEYS.ClipboardHistory)) {
     pasteGesture.down(event, { session, chart: session.chart, lineIndex: session.lineIndex, targetLineIndex: clipboardTargetLine(), layer: timeline.layer, beat: clipboardBeat(timeline) }); return;
   }
   let handled = true;
   try {
     if (event.repeat && ['NumberMirror', 'NumberFill', 'Pause', 'AddHold', 'AddEvent', 'AddTap', 'StartView', 'EndView', 'JumpView', 'ReplayView', 'StartView_HOLD', 'JumpView_HOLD', 'ToggleMultiLine', 'SwitchMultiLineMode', 'SwitchLock', 'StickNext', 'TimeAttach'].includes(action)) { event.preventDefault(); return; }
-    if (action === 'TimeAttach') seekBeat(Math.round(currentBeat() * timeline.division) / timeline.division);
-    else if (!preview.visible && action?.startsWith('Page')) nudgeSelection(session, { PageLeft: 'ArrowLeft', PageRight: 'ArrowRight', PageUp: 'ArrowUp', PageDown: 'ArrowDown' }[action], timeline.division, timeline.gridCount);
+    if (action === 'DirectPlacement') { if (!event.repeat) toggleDirectPlacement(); }
+    else if (action === 'TimeAttach') seekBeat(Math.round(currentBeat() * timeline.division) / timeline.division);
+    else if ((!preview.visible || directPlacement.active) && action?.startsWith('Page')) nudgeSelection(session, { PageLeft: 'ArrowLeft', PageRight: 'ArrowRight', PageUp: 'ArrowUp', PageDown: 'ArrowDown' }[action], timeline.division, timeline.gridCount);
     else if (timeline.eventInteraction.pending && /^[0-9]$/.test(event.key) && !event.ctrlKey && !event.altKey) timeline.eventInteraction.place(undefined, undefined, Number(event.key) || 10);
     else if (action === 'Save') { event.preventDefault(); await save(); }
     else if (action === 'Undo') travel('undo');
@@ -1824,7 +1941,7 @@ window.addEventListener('keydown', async event => {
     else if (action === 'Copy') copySelection();
     else if (action === 'Shear') cutSelection();
     else if (action === 'ClipboardHistory') toggleClipboardPanel();
-    else if (!preview.visible && ['NumberMirror', 'NumberFill'].includes(action)) applyNumberShortcut(session, action);
+    else if ((!preview.visible || directPlacement.active) && ['NumberMirror', 'NumberFill'].includes(action)) applyNumberShortcut(session, action);
     else if (['Paste', 'PasteMirror', 'KeepTimePaste', 'KeepTimePasteMirror'].includes(action)) pasteSelection(action.endsWith('Mirror'), action.startsWith('KeepTime'));
     else if (action === 'Pause') { event.preventDefault(); await togglePlayback(); }
     else if (['StartView', 'ReplayView', 'StartView_HOLD', 'JumpView_HOLD'].includes(action)) {
@@ -1836,6 +1953,7 @@ window.addEventListener('keydown', async event => {
     else if (action === 'SwitchUI') switchNoteView();
     else if (action === 'ResetCamera') resetCamera();
     else if (action === 'ToggleMultiLine') {
+      directPlacement.close();
       const enabling = !session.multiLineEnabled;
       session.setMultiLineEnabled(enabling, session.focus === 'events' ? 'events' : 'notes');
       if (enabling) openMultiLinePanel();
@@ -1848,7 +1966,7 @@ window.addEventListener('keydown', async event => {
     else if (action === 'StickNext') {
       if (!noiseEditor.active && !globalEvents.active && session.focus === 'events' && selectedEventEntries(session).length === 1) stickSelectedEventToNext(session);
     }
-    else if (preview.visible && ['AddTap', 'AddDrag', 'AddFlick', 'AddHold', 'AddEvent'].includes(action)) handled = false;
+    else if (preview.visible && !directPlacement.active && ['AddTap', 'AddDrag', 'AddFlick', 'AddHold', 'AddEvent'].includes(action)) handled = false;
     else if (area === 'events' && ['AddTap', 'AddEvent'].includes(action)) handled = timeline.eventInteraction.place(undefined, undefined, undefined, action === 'AddTap');
     else if (['AddTap', 'AddDrag', 'AddFlick', 'AddHold'].includes(action)) handled = timeline.addAtCursor({ AddTap: 1, AddDrag: 4, AddFlick: 3, AddHold: 2 }[action]);
     else if (action === 'Delete') deleteSelection();
@@ -1885,6 +2003,22 @@ element('#modal').addEventListener('close', () => { if (atHome) home.refresh().c
 const markerResizeObserver = new ResizeObserver(() => { renderTimelineMarkers(); invalidate(); });
 markerResizeObserver.observe(element('.stage'));
 markerResizeObserver.observe(element('.scrubber-wrap'));
+const placementToolbar = element('.editor-toolbar'), placementControl = element('.direct-placement-control');
+let placementAlignmentFrame = 0;
+const schedulePlacementAlignment = () => {
+  if (placementAlignmentFrame) return;
+  placementAlignmentFrame = requestAnimationFrame(() => {
+    placementAlignmentFrame = 0;
+    const rect = placementControl.getBoundingClientRect(), target = element('.beat-seek').getBoundingClientRect();
+    if (!rect.width || !target.width) return;
+    const margin = parseFloat(getComputedStyle(placementControl).marginLeft) || 0;
+    const gap = Math.max(0, Math.round((target.left - rect.left + margin) * 100) / 100) + 'px';
+    if (placementToolbar.style.getPropertyValue('--rpen-placement-align-gap') !== gap) placementToolbar.style.setProperty('--rpen-placement-align-gap', gap);
+  });
+};
+const placementAlignmentObserver = new ResizeObserver(schedulePlacementAlignment);
+for (const control of [placementToolbar, ...placementToolbar.children, ...element('.transport').children]) placementAlignmentObserver.observe(control);
+document.addEventListener('rpen-editor-skin-changed', schedulePlacementAlignment);
 let lastPaint = 0;
 let lastInfoTick = 0;
 const frameLimiter = new FrameLimiter();
@@ -1902,6 +2036,7 @@ function frame(timestamp) {
   if (timestamp - frameSampleStart >= 500) { measuredFps = frameSampleCount * 1000 / (timestamp - frameSampleStart); frameSampleStart = timestamp; frameSampleCount = 0; }
   advanceEditClock(timestamp);
   if (hasDocument && !atHome && timestamp - lastInfoTick > 500) {
+    diagnostics.update();
     const info = element('#chart-info dd');
     if (info && !element('#chart-info').hidden) info.textContent = info.textContent.replace(/Time: .*$/, `Time: ${formatEditTime(editTimeSeconds)}  FPS: ${measuredFps.toFixed(1)}`);
     lastInfoTick = timestamp;
@@ -1917,14 +2052,14 @@ function frame(timestamp) {
   if (audio.playing && !mods?.runtime.locks.size && loop && currentBeat() >= loop.end) seekBeat(loop.start, false);
   if (audio.playing && audio.time >= audio.duration) { audio.pause(); invalidate(); }
   hitSounds.tick(session.chart, tempo, session.lineIndex);
-  if (!atHome && (audio.playing || dirtyFrame || eventSampler.looping || trajectoryPanel.active || noiseTrackingPanel.active && noiseTrackingPanel.animating || noiseFitPanel.active && noiseFitPanel.options.animate && noiseFitPanel.options.show && noiseFitPanel.previewChart && !noiseFitPanel.fullPreview) && frameLimiter.shouldRender(timestamp, editorPreferences.fpsLimit ?? preferences.settings.fpsLimit)) {
+  if (!atHome && (audio.playing || dirtyFrame || eventSampler.looping || trajectoryPanel.active || noteTrackingPanel.active && noteTrackingPanel.animating || noiseTrackingPanel.active && noiseTrackingPanel.animating || noiseFitPanel.active && noiseFitPanel.options.animate && noiseFitPanel.options.show && noiseFitPanel.previewChart && !noiseFitPanel.fullPreview) && frameLimiter.shouldRender(timestamp, editorPreferences.fpsLimit ?? preferences.settings.fpsLimit)) {
     frameSampleCount++;
     const start = performance.now();
     const beat = currentBeat();
     session.editSeconds = Math.max(0, chartSeconds());
     updateLineInfo();
     timeline.origin = beat;
-    if (!preview.visible && !noiseEditor.active && !globalEvents.active && !noiseFitPanel.active && !noiseTrackingPanel.previewing) {
+    if (!preview.visible && !noiseEditor.active && !globalEvents.active && !noiseFitPanel.active && !noiseTrackingPanel.previewing && !noteTrackingPanel.previewing) {
       timeline.draw(beat);
       multiEdit.drawTimeline();
       selectionOverlay.draw();
@@ -1936,15 +2071,19 @@ function frame(timestamp) {
     if (globalEvents.active) globalEvents.draw(beat);
     preview.duration = realtimePreview.duration = audio.duration;
     preview.selectedNoiseArea = realtimePreview.selectedNoiseArea = noiseEditor.active ? noiseEditor.selected : -1;
+    if (directPlacement.active) directPlacement.layout();
     const viewSession = timeline.getSession();
+    const noteOverrides = timeline.previewNotes();
     const trajectoryView = trajectoryPanel.tick(timestamp, chartSeconds(), audio.playing, realtimePreview);
     const noiseView = noiseEditor.active ? noiseEditor.previewState() : null;
     const eventSampleView = eventSampler.previewState();
     const textView = textLinesPanel.view();
     const noiseFitView = noiseFitPanel.tick(timestamp, chartSeconds(), audio.playing, realtimePreview);
-    const trackingView = noiseTrackingPanel.tick(timestamp, chartSeconds(), audio.playing);
+    const trackingView = noteTrackingPanel.tick(timestamp, chartSeconds(), audio.playing) ?? noiseTrackingPanel.tick(timestamp, chartSeconds(), audio.playing);
+    const quickCurveView = quickCurve.view();
     const modView=emitModHook('preview:before',{chart:trackingView?.chart ?? noiseView?.chart ?? eventSampleView?.chart ?? noiseFitView?.chart ?? textView?.chart ?? trajectoryView?.chart ?? (multiEdit.active && multiEdit.previewHovered && multiEdit.previewEnabled.checked && multiEdit.result ? multiEdit.result.chart : viewSession.chart),seconds:trackingView?.seconds ?? noiseView?.seconds ?? eventSampleView?.seconds ?? noiseFitView?.seconds ?? textView?.seconds ?? trajectoryView?.seconds ?? chartSeconds(),lineIndex:viewSession.lineIndex});
-    const viewChart = modView.chart;
+    const viewChart = quickCurveView ?? modView.chart;
+    preview.noteOverrides = realtimePreview.noteOverrides = viewChart === session.chart ? noteOverrides : null;
     const viewSeconds = modView.seconds;
     const previewAllLines = preview.allLines; const previewEffects = preview.showHitEffects;
     const previewNumbers = preview.lineNumbers; const previewArrows = preview.lineArrows;
@@ -1954,6 +2093,7 @@ function frame(timestamp) {
     if (textView || noiseFitView) { preview.allLines = true; preview.showHitEffects = false; preview.lineNumbers = false; preview.lineArrows = false; }
     preview.draw(viewChart, tempo, viewSeconds, modView.lineIndex);
     if(preview.visible)mods?.runtime.draw(preview,{target:'preview',chart:viewChart,tempo,seconds:viewSeconds,timestamp});
+    if (directPlacement.active) { directPlacement.draw(true); batchControls.sync(); }
     preview.allLines = previewAllLines; preview.showHitEffects = previewEffects;
     preview.lineNumbers = previewNumbers; preview.lineArrows = previewArrows;
     preview.forceLineOpacity = forcedLineOpacity;
@@ -2109,6 +2249,11 @@ readPreferences().then(saved => {
 }).catch(error => status(t('app.s01610aa', { p0: error.message })));
 
 function applyDisplaySettings() {
+  session.lineEventDefaults = normalizeLineDefaults(editorPreferences.lineEventDefaults);
+  timeline.noteSpacing = editorPreferences.noteSpacing ?? DEFAULT_EDITOR_PREFERENCES.noteSpacing;
+  timeline.notesOnlyNoteScale = editorPreferences.notesOnlyNoteScale ?? DEFAULT_EDITOR_PREFERENCES.notesOnlyNoteScale;
+  directPlacement.opacity = editorPreferences.placementOpacity ?? DEFAULT_EDITOR_PREFERENCES.placementOpacity;
+  element('#direct-placement-enabled').checked = editorPreferences.directPlacement ?? false;
   const fpsLimit = editorPreferences.fpsLimit ?? preferences.settings.fpsLimit;
   element('#fps-unlimited').checked = !fpsLimit;
   element('#fps-limit').disabled = !fpsLimit;
@@ -2200,20 +2345,21 @@ const modEditor={
   get session(){return session;},get chart(){return session.chart;},get tempo(){return tempo;},get assets(){return assets;},get preferences(){return preferences;},get editorPreferences(){return editorPreferences;},get chartName(){return chartName;},get agentWorkspaceId(){return versionRepoId;},
   get hasDocument(){return hasDocument&&!atHome;},get home(){return atHome;},get activePane(){return activePaneName;},
   get dirty(){return session.history.dirty||assetDirty;},get libraryProject(){return libraryProject;},get loop(){return loop;},set loop(value){loop=value;},
-  audio,audioSources,audioOnsets,audioAnalysis,playback,preview,realtimePreview,timeline,skin,images,hitSounds,editorSkins,noteSkins,noiseEditor,eventSampler,trajectoryPanel,textLinesPanel,noiseFitPanel,noiseTrackingPanel,multiEdit,batchControls,linePanel,collaboration,globalEvents,globalEventRegistry,openGlobalEvents,versionControl,
+  audio,audioSources,audioOnsets,audioAnalysis,playback,preview,realtimePreview,timeline,skin,images,hitSounds,editorSkins,noteSkins,noiseEditor,eventSampler,trajectoryPanel,textLinesPanel,noiseFitPanel,noiseTrackingPanel,noteTrackingPanel,quickCurve,multiEdit,batchControls,linePanel,collaboration,globalEvents,globalEventRegistry,openGlobalEvents,versionControl,directPlacement,placementDefaultsPanel,diagnostics,diagnosticHighlight,
   chartSeconds,offsetSeconds,currentBeat,invalidate,render:renderSession,notify,save,activatePane,
   commit:(label,chart)=>session.commit(label,chart),replace:(chart,name=chartName)=>replaceChart(chart,name),
   seek:(seconds,{music=false,pause=true}={})=>{playback.seek(seconds+(music?0:offsetSeconds()),pause);invalidate();},
   seekBeat,selectLine:index=>{session.selectLine(index);renderSession();},setPreview:(visible,options={})=>togglePreview(visible,options.stay??true,false,{autoplay:options.autoplay??false}),
   play:async()=>{if(!audio.playing&&!playback.pending)await togglePlayback();},pause:()=>playback.pause(),
-  addAsset:(path,bytes)=>{assets.set(path,bytes);assetDirty=true;images.load(session.chart,assets,chartName);invalidate();},
-  removeAsset:path=>{assets.delete(path);assetDirty=true;images.load(session.chart,assets,chartName);invalidate();},
+  addAsset:(path,bytes)=>{assets.set(path,bytes);assetDirty=true;diagnosticAssetRevision++;images.load(session.chart,assets,chartName);invalidate();},
+  removeAsset:path=>{assets.delete(path);assetDirty=true;diagnosticAssetRevision++;images.load(session.chart,assets,chartName);invalidate();},
   raw:{get session(){return session;},get chart(){return session.chart;},set chart(value){session.history.document=value;session.notify();},get assets(){return assets;},get tempo(){return tempo;},set tempo(value){tempo=value;timeline.tempo=value;invalidate();},renderSession,replaceChart,activatePane,togglePlayback,togglePreview,save,applyDisplaySettings,persistEditor,setHome},
   beginPreviewSession(){
     if(atHome||!hasDocument)throw Error(t('app.s21c0425'));
+    directPlacement.close();linePicker.hide();
     const snapshot={visible:preview.visible,pane:activePaneName,allLines:preview.allLines,lineNumbers:preview.lineNumbers,lineArrows:preview.lineArrows,lineTint:preview.lineTint,cameraX:preview.cameraX,viewDivisor:preview.viewDivisor,collisionGeometry:preview.collisionGeometry};
     playback.pause();timeline.cancelPlacement();batchControls.cancel();pasteGesture.cancel();heldPreview=null;playbackSpaceHeld=false;clearNoteSourceToast();
-    eventSampler.finish?.(false);noiseEditor.endSample(false);noiseEditor.flush();noiseTrackingPanel.endSample();activatePane('chart');
+    eventSampler.finish?.(false);noiseEditor.endSample(false);noiseEditor.flush();noiseTrackingPanel.endSample();noteTrackingPanel.endSample();quickCurve.cancel();activatePane('chart');
     preview.allLines=true;preview.lineNumbers=false;preview.lineArrows=false;preview.lineTint=false;preview.collisionGeometry=true;togglePreview(true,true,false,{autoplay:false});
     let done=false;return()=>{if(done)return;done=true;playback.pause();togglePreview(snapshot.visible,true,false,{autoplay:false});preview.allLines=snapshot.allLines;preview.lineNumbers=snapshot.lineNumbers;preview.lineArrows=snapshot.lineArrows;preview.lineTint=snapshot.lineTint;preview.cameraX=snapshot.cameraX;preview.viewDivisor=snapshot.viewDivisor;preview.collisionGeometry=snapshot.collisionGeometry;activatePane(snapshot.pane);invalidate();};
   },
@@ -2223,10 +2369,10 @@ agentPanel = new AgentPanel(modEditor, { activate: activatePane, notify, prepend
     const references = resourceReferences(session.chart, assets, chartName);
     if (!bytes) {
       if (Object.values(references).includes(path) || session.chart.judgeLineList.some(line => line.Texture === path)) throw Error(t('app.s31f8305'));
-      assets.delete(path); assetDirty = true; images.load(session.chart, assets, chartName); invalidate(); return { deleted: path, needsSave: true, undoable: false };
+      assets.delete(path); assetDirty = true; diagnosticAssetRevision++; images.load(session.chart, assets, chartName); invalidate(); return { deleted: path, needsSave: true, undoable: false };
     }
     if (binding === 'song' || references.song === path) { if (!await loadMusic(bytes, path, true, false)) throw Error(t('app.s5402e57')); }
-    else { assets.set(path, bytes); assetDirty = true; if (binding === 'background') session.commit(t('app.sf699ea9'), { ...session.chart, META: { ...session.chart.META, background: path } }); images.load(session.chart, assets, chartName); }
+    else { assets.set(path, bytes); assetDirty = true; diagnosticAssetRevision++; if (binding === 'background') session.commit(t('app.sf699ea9'), { ...session.chart, META: { ...session.chart.META, background: path } }); images.load(session.chart, assets, chartName); }
     hitSounds.setProject(session.chart, assets, chartName); invalidate(); return { written: path, bytes: bytes.length, needsSave: true, undoable: false };
   },
   capture: async () => {
@@ -2240,3 +2386,15 @@ agentPanel = new AgentPanel(modEditor, { activate: activatePane, notify, prepend
   },
 });
 mods=new ModManager(modEditor,{notify,invalidate});
+const aboutUpdates = new AboutUpdates(settingsDialog, {
+  dirty: () => hasDocument && (session.history.dirty || assetDirty),
+  beforeRestart: async () => {
+    playback.pause(); noiseEditor.flush(); await agentPanel?.stopAndFlush();
+    if (hasDocument && (session.history.dirty || assetDirty)) {
+      try { await save(); } catch { throw Object.assign(Error('Save incomplete'), { code: 'UPDATE_SAVE' }); }
+    }
+    if (hasDocument && (session.history.dirty || assetDirty)) throw Object.assign(Error('Save incomplete'), { code: 'UPDATE_SAVE' });
+    await flushLocalPreferences();
+    if (!nativeStorage && hasDocument && libraryProject?.id) sessionStorage.setItem(LOCALE_REOPEN_KEY, libraryProject.id);
+  },
+});

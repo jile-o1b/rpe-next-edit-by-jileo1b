@@ -34,7 +34,7 @@ export function curveDialog(session, division, anchors = []) {
       if (!control.value.trim()) throw new Error(t('curve-dialog.s7a3c870'));
       return [key, key.endsWith('Time') ? parseBeat(control.value) : Number(control.value)];
     }));
-    return { ...values, division };
+    return { ...values, division, noteDefaults: session.noteDefaults };
   };
   const refresh = () => {
     const context = editorSkinContext(canvas.getContext('2d'), 'curve'); context.clearRect(0, 0, canvas.width, canvas.height);

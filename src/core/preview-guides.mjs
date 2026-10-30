@@ -18,8 +18,8 @@ export function mergeGuides(guides, scale, enabled = true) {
   return groups;
 }
 
-export function pickGuide(guides, point, selected, radius = 10) {
-  const matches = guides.filter(guide => {
+export function matchingGuides(guides, point, radius = 10) {
+  return guides.filter(guide => {
     if (guide.segment) {
       const [start, end] = guide.segment, dx = end.x - start.x, dy = end.y - start.y, length = dx * dx + dy * dy;
       const amount = length ? Math.max(0, Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / length)) : 0;
@@ -31,6 +31,14 @@ export function pickGuide(guides, point, selected, radius = 10) {
     const perpendicular = -deltaX * Math.sin(angle) + deltaY * Math.cos(angle);
     return Math.abs(across) <= Math.max(guide.halfWidth, radius) && Math.abs(perpendicular) <= radius;
   });
+}
+
+export function sortedGuideMatches(guides, point, radius = 10) {
+  return matchingGuides(guides, point, radius).sort((left, right) => right.alpha - left.alpha || left.index - right.index);
+}
+
+export function pickGuide(guides, point, selected, radius = 10) {
+  const matches = matchingGuides(guides, point, radius);
   if (!matches.length) return null;
   return matches[(matches.findIndex(guide => guide.index === selected) + 1) % matches.length].index;
 }

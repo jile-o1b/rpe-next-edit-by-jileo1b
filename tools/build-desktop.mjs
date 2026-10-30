@@ -24,6 +24,7 @@ await writeFile(join(application, 'package.json'), JSON.stringify({
   name: metadata.name, version: metadata.version, author: metadata.author, license: metadata.license,
   description: metadata.description, main: 'desktop/main.cjs'
 }, null, 2) + '\n');
+await writeFile(join(application, 'build-info.json'), JSON.stringify({ version: metadata.version, kind: 'editor', platform: process.platform, arch: process.arch, electron: metadata.devDependencies.electron }, null, 2) + '\n');
 await writeFile(join(output, '使用说明.txt'), '\uFEFF' + [
   'Re:PhiEdit Next — Windows x64 桌面测试版',
   '作者：cmdysj。在原 Re:PhiEdit（RPE）基础上，使用 AI（GPT）重构。',

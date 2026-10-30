@@ -21,11 +21,14 @@ export function drawClipboard(timeline, context, width, height, area) {
   if (area === 'notes') for (const [index, note] of projected.notes.entries()) {
     const lineIndex = projected.noteLines?.[index] ?? session.lineIndex;
     const horizontal = timeline.noteHorizontal(note.positionX, lineIndex); const noteWidth = timeline.noteWidth(note);
-    const bottom = timeline.verticalForLine(beatValue(note.startTime), lineIndex, height); const top = timeline.verticalForLine(beatValue(note.endTime), lineIndex, height);
+    const head = timeline.noteVertical(note, 'startTime', lineIndex, height), tail = timeline.noteVertical(note, 'endTime', lineIndex, height);
+    const bottom = Math.max(head, tail), top = Math.min(head, tail);
     if (bottom < -10 || top > height + 10 || timeline.clampNoteHorizontal(horizontal, noteWidth, width, lineIndex) === null) continue;
     context.fillStyle = colors[note.type];
+    if (timeline.noteView?.flow) { context.save(); timeline.clipNoteSide(context, Number(note.above ?? 1) === 1 ? 1 : -1, width, height); }
     const noteHeight = 10 * timeline.renderNoteScale;
-    context.fillRect(horizontal - noteWidth / 2, Math.max(-10, note.type === 2 ? top : bottom - noteHeight / 2), noteWidth, note.type === 2 ? Math.min(height + 20, bottom - Math.max(-10, top)) : noteHeight);
+    context.fillRect(horizontal - noteWidth / 2, Math.max(-10, note.type === 2 ? top : head - noteHeight / 2), noteWidth, note.type === 2 ? Math.min(height + 20, bottom - Math.max(-10, top)) : noteHeight);
+    if (timeline.noteView?.flow) context.restore();
   }
   if (area === 'events') for (const [{ type, event }, index] of projected.events.map((entry, index) => [entry, index])) {
     const lineIndex = projected.eventLines?.[index] ?? session.lineIndex;

@@ -1,11 +1,12 @@
 import { SceneRuntime } from '../core/scene.mjs';
+import { NotePreview } from '../core/note-preview.mjs';
 import { prepareCanvas, NOTE_COLORS } from './timeline.mjs';
 import { DEFAULT_LINE_WIDTH, DEFAULT_LINE_HEIGHT, HIT_DURATION, hitFrame } from '../core/visual-constants.mjs';
 import { previewViewport, previewDefaultFrame, previewPositionScale, previewNotePosition, simultaneousNotes, hitParticles, overflowTextureSize } from '../core/editor-display.mjs';
 import { renderPasses } from '../core/game-ui.mjs';
 import { drawGameUi } from './game-ui.mjs';
 import { recentHits, HitGeometryCache } from '../core/hit-effects.mjs';
-import { lineGuides, mergeGuides, pickGuide, formatLineNumbers } from '../core/preview-guides.mjs';
+import { lineGuides, mergeGuides, pickGuide, sortedGuideMatches, formatLineNumbers } from '../core/preview-guides.mjs';
 import { ShaderRuntime } from '../core/shader.mjs';
 import { ShaderPipeline } from './shader-pipeline.mjs';
 import { PreviewBackground, textureInViewport } from './preview-background.mjs';
@@ -23,6 +24,7 @@ export class Preview {
     this.noisePreview = new NoisePreview();
     this.allLines = true; this.visible = false; this.noteSize = 175; this.lineScale = 1.5; this.backgroundAlpha = 0.35; this.backgroundBlur = 10.5; this.effectsSince = Infinity; this.applyShaders = true; this.opacity = 1; this.showHitEffects = true;
     this.noteHitAreas = [];
+    this.noteDraft = new NotePreview(); this.simultaneousCounts = new Map();
     this.hitGeometry = new HitGeometryCache();
     this.hitBatch = new HitEffectBatch();
     this.viewportOverflow = DEFAULT_EDITOR_PREFERENCES.viewportOverflow;
@@ -56,12 +58,14 @@ export class Preview {
     for (const layer of [this.shaderCanvas, this.overlayCanvas]) if (layer && layer.parentElement !== this.canvas.parentElement) this.canvas.after(layer);
     if (this.overflowLayer && this.overflowLayer.parentElement !== this.canvas.parentElement) this.canvas.after(this.overflowLayer);
     this.chart = chart;
-    if (this.scene.chart !== chart || this.scene.tempo !== tempo) {
-      this.scene.compile(chart, tempo); this.simultaneous = simultaneousNotes(chart, tempo);
+    if (this.preparedChart !== chart || this.preparedTempo !== tempo || this.scene.chart !== chart || this.scene.tempo !== tempo) {
+      this.scene.compile(chart, tempo); this.simultaneous = simultaneousNotes(chart, tempo, this.simultaneousCounts);
       this.completionTimes = this.scene.lines.flatMap(runtime => runtime.notes.filter(entry => !entry.note.isFake).map(entry => entry.note.type === 2 ? entry.end : entry.start)).sort((left, right) => left - right);
       this.passes = renderPasses(chart.judgeLineList, this.scene.order);
       this.shaderRuntime.compile(chart, tempo);
+      this.preparedChart = chart; this.preparedTempo = tempo;
     }
+    this.noteDraft.update(this.scene, this.noteOverrides);
     const { context, width, height } = prepareCanvas(this.canvas, rectangle);
     const viewport = previewViewport(width, height, this.aspectRatio ?? 1.5);
     const divisor = this.viewDivisor ?? 1;
@@ -154,11 +158,11 @@ export class Preview {
     if (!this.overflowSceneCaptured) {
       surface.clearRect(0, 0, frame.width, frame.height);
       if (this.applyShaders || noiseRenderingLayers(chart).some(layer => this.noisePreview.usesSkin(layer))) { surface.fillStyle = '#111'; surface.fillRect(0, 0, frame.width, frame.height); }
-      const guides = this.guides, hits = this.noteHitAreas;
+      const guides = this.guides, hits = this.noteHitAreas, centers = this.noteCenters; this.noteCenters = null;
       try {
         this.drawBackground(surface, chart, tempo, seconds, selectedLine, expanded);
         this.drawScene(surface, chart, tempo, seconds, selectedLine, expanded);
-      } finally { this.guides = guides; this.noteHitAreas = hits; }
+      } finally { this.guides = guides; this.noteHitAreas = hits; this.noteCenters = centers; }
     }
     let shaderResult = null;
     const effects = this.applyShaders ? this.shaderRuntime.active(seconds) : [];
@@ -245,9 +249,9 @@ export class Preview {
     const expanded = { ...frame, viewport, divisor: Math.max(frame.divisor, frame.width / frame.scale / 1350), cullNotes: true };
     surface.setTransform(ratio, 0, 0, ratio, 0, 0); surface.clearRect(0, 0, frame.width, frame.height);
     surface.fillStyle = '#111'; surface.fillRect(0, 0, frame.width, frame.height);
-    const guides = this.guides, hits = this.noteHitAreas;
+    const guides = this.guides, hits = this.noteHitAreas, centers = this.noteCenters; this.noteCenters = null;
     try { this.drawBackground(surface, chart, tempo, seconds, selectedLine, expanded); this.drawScene(surface, chart, tempo, seconds, selectedLine, expanded); }
-    finally { this.guides = guides; this.noteHitAreas = hits; }
+    finally { this.guides = guides; this.noteHitAreas = hits; this.noteCenters = centers; }
     let overlay = surface;
     this.overflowShaderOverlay = null;
     if (hasLocalEffects && (this.showGameUI || chart.blockAreaList?.length)) {
@@ -293,8 +297,8 @@ export class Preview {
     const key = [chart, tempo, selectedLine, frame.width, frame.height, frame.scale, globalThis.devicePixelRatio || 1, this.aspectRatio, this.allLines, this.noteSize, this.lineScale,
       this.skin, this.skin?.resourcePack, this.skin?.resourcePack?.info, this.skin?.images?.size, images, images?.generation, images?.decodedBytes, images?.background,
       this.backgroundAlpha, this.backgroundBlur, this.overflowBlur, this.overflowDarken, this.applyShaders, this.showGameUI, this.duration, this.highlight,
-      this.lineTint, this.forceLineOpacity, this.showHitEffects, this.effectsSince, noise.seamless, noise.forceSimple,
-      [...(noise.hiddenLayers ?? [])].join('\0'), [...(noise.simpleLayers ?? [])].join('\0'), this.overflowRevision,
+      this.lineTint, this.forceLineOpacity, this.showHitEffects, this.effectsSince, this.noteOpacity, noise.seamless, noise.forceSimple,
+      [...(noise.hiddenLayers ?? [])].join('\0'), [...(noise.simpleLayers ?? [])].join('\0'), this.overflowRevision, this.noteOverrides,
       (frame.shaderEffects ?? []).map(effect => [effect.shader, effect.sourceName, effect.startBeat, effect.endBeat, effect.global].join(':')).join('|'), ...this.shaderRuntime.sources.values()];
     const now = performance.now(), memo = this.overflowMemo;
     const cacheable = !this.overflowAnimated && !images?.backgroundAnimated && this.drawScene === Preview.prototype.drawScene && this.drawBackground === Preview.prototype.drawBackground && this.drawUi === Preview.prototype.drawUi;
@@ -317,7 +321,7 @@ export class Preview {
   }
 
   drawUi(context, chart, tempo, seconds, selectedLine, { viewport, scale, states }) {
-    drawGameUi(context, chart, states, this.completionTimes, seconds, selectedLine, viewport, scale, this.skin, this.duration ?? 600);
+    drawGameUi(context, chart, states, this.completionTimes, seconds, selectedLine, viewport, scale, this.skin, this.duration ?? 600, this.noteDraft.completionDelta(seconds));
   }
 
   // Independent world pass, allowing optional modules to project it before screen effects and UI.
@@ -327,13 +331,16 @@ export class Preview {
     this.guides = lineGuides(this.forceLineOpacity ? states.map(state => ({ ...state, alpha: 255 })) : states, chart.judgeLineList, order, width, height, scale);
     if (center) for (const guide of this.guides) { guide.x -= center.x * scale; guide.y += center.y * scale; }
     const visibleDivisor = Math.max(divisor, renderViewport.width / scale / 1350);
-    const visibleNotes = new Map(order.map(index => [index, this.scene.lines[index]?.visibleNotes(seconds, states[index], (1600 * visibleDivisor + Math.hypot((states[index]?.x ?? 0) - (center?.x ?? 0), (states[index]?.y ?? 0) - (center?.y ?? 0))) / positionScale.y) ?? []]));
+    const visibleNotes = new Map(order.map(index => [index, this.noteDraft.runtime(this.scene, index)?.visibleNotes(seconds, states[index], (1600 * visibleDivisor + Math.hypot((states[index]?.x ?? 0) - (center?.x ?? 0), (states[index]?.y ?? 0) - (center?.y ?? 0))) / positionScale.y) ?? []]));
     const noteAspects = new Map();
     this.noteHitAreas = [];
+    this.noteCenters?.clear();
+    const noteOpacity = clamp(this.noteOpacity ?? 1);
     for (const pass of this.passes) for (const index of pass.kind === 'line' ? [pass.index] : order) {
       if (pass.kind === 'line' && ((!this.allLines && index !== selectedLine) || !this.forceLineOpacity && (chart.judgeLineList[index].attachUI || states[index].alpha <= 0) || states[index].scaleX === 0 || states[index].scaleY === 0)) continue;
-      const runtime = this.scene.lines[index];
+      const runtime = this.noteDraft.runtime(this.scene, index);
       const state = states[index];
+      const collectCenters = index === this.noteCenterLine && this.noteCenters;
       if (!runtime) continue;
       if (pass.kind === 'line' && !runtime.line.extended?.textEvents?.length) {
         const texture = runtime.line.Texture && runtime.line.Texture !== 'line.png'
@@ -354,7 +361,7 @@ export class Preview {
         if ((note.type === 2) !== (pass.kind === 'hold')) continue;
         const position = previewNotePosition(runtime.noteState(entry, state, seconds), runtime.line, positionScale);
         if (position.alpha <= 0 || position.size === 0) continue;
-        const highlight = this.highlight !== false && this.simultaneous.has(note);
+        const highlight = this.highlight !== false && this.noteDraft.simultaneous(entry, this.simultaneous, this.simultaneousCounts);
         const textureScale = this.skin?.noteScale?.(highlight) ?? 1;
         const baseNoteWidth = this.noteSize * scale * position.size, baseHeightWidth = this.noteSize * scale * position.sizeY;
         const noteWidth = baseNoteWidth * textureScale, heightWidth = baseHeightWidth * textureScale;
@@ -385,8 +392,9 @@ export class Preview {
           Object.assign(hitArea,{collisionWidth:Math.abs(noteWidth),collisionHeight:halfHeight*2,rotation,polygon:note.type===2?null:[[-noteWidth/2,-halfHeight],[noteWidth/2,-halfHeight],[noteWidth/2,halfHeight],[-noteWidth/2,halfHeight]].map(([dx,dy])=>({x:screenX+(dx+dy*skew)*cosine-dy*sine,y:screenY+(dx+dy*skew)*sine+dy*cosine}))});
         }
         this.noteHitAreas.push(hitArea);
+        if (collectCenters) collectCenters.set(entry.index, hitArea);
         context.save();
-        context.globalAlpha = clamp(position.alpha);
+        context.globalAlpha = clamp(position.alpha) * noteOpacity;
         const tint = note.tint ?? note.color;
         context.fillStyle = Array.isArray(tint) ? `rgb(${tint.join(',')})` : NOTE_COLORS[note.type];
         let drawnHold = false;
@@ -394,7 +402,7 @@ export class Preview {
         if (note.type === 2 && !drawnHold) {
           context.globalAlpha *= 0.55;
           context.fillRect(horizontal - noteWidth / 2, -position.tail * scale, noteWidth, (position.tail - position.y) * scale);
-          context.globalAlpha = clamp(position.alpha);
+          context.globalAlpha = clamp(position.alpha) * noteOpacity;
         }
         if (position.showHead && !drawnHold) {
           context.translate(horizontal, -position.y * scale);
@@ -409,7 +417,10 @@ export class Preview {
   }
 
   drawHits(context, seconds, order, originX, originY, scale, positionScale, renderViewport, width, height, allowBatch = true) {
-    const buckets = order.map(index => [index, this.scene.lines[index] ? recentHits(this.scene.lines[index], seconds, this.effectsSince, this.skin?.hitLifetime ?? Math.max(HIT_DURATION, 2 / 3)) : []]);
+    const buckets = order.map(index => {
+      const runtime = this.noteDraft.runtime(this.scene, index), lifetime = this.skin?.hitLifetime ?? Math.max(HIT_DURATION, 2 / 3);
+      return [index, runtime ? runtime.previewHits ? runtime.previewHits(seconds, this.effectsSince, lifetime) : recentHits(runtime, seconds, this.effectsSince, lifetime) : []];
+    });
     const target = allowBatch && this.skin?.hitBatchCompatible && buckets.reduce((total, bucket) => total + bucket[1].length, 0) > 128 ? this.hitBatch.begin(context, width, height, this.skin) ?? context : context;
     try {
       const hitStates = new Map();
@@ -455,6 +466,13 @@ export class Preview {
     const view = this.viewport;
     if (point.x < view.left || point.x > view.left + view.width || point.y < view.top || point.y > view.top + view.height) return null;
     return pickGuide(this.guides ?? [], point, this.selectedLine);
+  }
+
+  pickLines(clientX, clientY) {
+    if (!this.visible || !this.pickPreviewLines || !this.viewport) return [];
+    const rectangle = this.canvas.getBoundingClientRect(), point = { x: clientX - rectangle.left, y: clientY - rectangle.top }, view = this.viewport;
+    if (point.x < view.left || point.x > view.left + view.width || point.y < view.top || point.y > view.top + view.height) return [];
+    return sortedGuideMatches(this.guides ?? [], point);
   }
 
   pickNoiseArea(clientX, clientY) {

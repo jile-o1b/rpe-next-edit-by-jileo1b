@@ -180,33 +180,13 @@ export function selectionScaleAnchor(snapshot, anchorMode = 0) {
 export function controlSelection(snapshot, kind, { deltaBeat = 0, deltaBeatByLine = null, deltaX = 0, dragX = 0, anchorMode = 0, snapX = false, gridCount = 11 } = {}) {
   const beatDelta = entry => deltaBeatByLine?.get(entry.lineIndex) ?? deltaBeat;
   if (kind === 'note-move') {
-    const minimum = snapshot.notes.reduce((value, entry) => Math.min(value, entry.note.positionX), Infinity);
-    const maximum = snapshot.notes.reduce((value, entry) => Math.max(value, entry.note.positionX), -Infinity);
     const spacing = verticalGrid(gridCount).spacing;
     if (snapX && Number.isFinite(spacing) && spacing > 0) deltaX = Math.round(deltaX / spacing) * spacing;
-    let lower = -675 - minimum; let upper = 675 - maximum;
-    if (snapX && Number.isFinite(spacing) && spacing > 0) {
-      lower = Math.ceil(lower / spacing) * spacing;
-      upper = Math.floor(upper / spacing) * spacing;
-    }
-    deltaX = Math.max(lower, Math.min(upper, deltaX));
     return editCapturedSelection(snapshot, { note: (item, entry) => ({ ...shiftedTime(item, beatDelta(entry)), positionX: item.positionX + deltaX }) });
   }
   if (kind === 'note-scale') {
-    const ordered = snapshot.notes.toSorted((left, right) => beatValue(left.note.startTime) - beatValue(right.note.startTime));
-    const minimum = ordered.reduce((value, entry) => Math.min(value, entry.note.positionX), Infinity);
-    const maximum = ordered.reduce((value, entry) => Math.max(value, entry.note.positionX), -Infinity);
     const anchor = selectionScaleAnchor(snapshot, anchorMode);
-    let rate = 1 + dragX / 300 * (anchorMode === 2 ? -1 : 1);
-    if (minimum >= -675 && maximum <= 675) {
-      let lower = -Infinity; let upper = Infinity;
-      for (const position of [minimum, maximum]) {
-        const offset = position - anchor; if (!offset) continue;
-        const bounds = [(-675 - anchor) / offset, (675 - anchor) / offset];
-        lower = Math.max(lower, Math.min(...bounds)); upper = Math.min(upper, Math.max(...bounds));
-      }
-      rate = Math.max(lower, Math.min(upper, rate));
-    }
+    const rate = 1 + dragX / 300 * (anchorMode === 2 ? -1 : 1);
     return editCapturedSelection(snapshot, { note: item => ({ ...item, positionX: anchor + (item.positionX - anchor) * rate }) });
   }
   if (kind === 'note-line') return editCapturedSelection(snapshot, { lineOffset: controlLineOffset(dragX) });

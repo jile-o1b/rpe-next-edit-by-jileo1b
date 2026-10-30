@@ -1,4 +1,9 @@
 const { contextBridge, ipcRenderer } = require('electron');
+contextBridge.exposeInMainWorld('rpenAppUpdates', {
+  version: 1,
+  call: (action, value) => ipcRenderer.invoke('rpen-app-update', { action, value }),
+  onProgress: callback => { const handler = (event, value) => callback(value); ipcRenderer.on('rpen-app-update-progress', handler); return () => ipcRenderer.removeListener('rpen-app-update-progress', handler); },
+});
 contextBridge.exposeInMainWorld('rpenDictation', {
   version: 1,
   call: (action, ...args) => ipcRenderer.invoke('rpen-dictation', { action, args }),

@@ -242,6 +242,12 @@ export class NoiseAreaEditor {
   }
   editorX(horizontal) { return Math.max(-675, Math.min(675, ((horizontal - AREA_BAR_WIDTH / 2) / Math.max(1, this.layout().split - AREA_BAR_WIDTH) - 0.5) * 1350)); }
   areaX(area, index) { const position = Number.isFinite(area.editorPositionX) ? area.editorPositionX : -540 + index % 6 * 216; return AREA_BAR_WIDTH / 2 + (position / 1350 + 0.5) * Math.max(1, this.layout().split - AREA_BAR_WIDTH); }
+  diagnosticBounds(index, type, eventIndex) {
+    const area = this.areas()[index], event = type ? area?.[type]?.[eventIndex] : area; if (!event) return null;
+    const head = this.y(beatValue(type ? event.startTime : area.appearTime)), tail = this.y(beatValue(type ? event.endTime : area.disappearTime));
+    const bounds = type ? this.eventBounds(type) : { x: this.areaX(area, index) - AREA_BAR_WIDTH / 2, width: AREA_BAR_WIDTH };
+    return { canvas: this.canvas, ...bounds, y: Math.min(head, tail) - 2, height: Math.max(8, Math.abs(tail - head) + 4) };
+  }
   hit(point) { return this.rects.findLast(rect => Boolean(rect.type) === (point.side === 'events') && point.x >= rect.x && point.x <= rect.x + rect.width && point.y >= Math.max(HEADER_HEIGHT, rect.y - 5) && point.y <= rect.y + rect.height + 5); }
   endpointTarget(point = this.cursor) {
     if (point?.side !== 'events' || this.context.timeline.rpeEventDrag !== true || !this.context.timeline.eventEndpointDragHeld || this.selection.size !== 1 || this.pending) return null;

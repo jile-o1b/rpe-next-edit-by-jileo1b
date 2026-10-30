@@ -23,12 +23,12 @@ function editor(notes) {
 }
 function pointer(horizontal, vertical) { return { button: 0, clientX: horizontal, clientY: vertical }; }
 
-test('仅音符视图按实际横向扩展倍率放大音符及坐标间距', () => {
+test('仅音符视图按实际横向扩展倍率放大，音符额外应用默认视觉缩放且不改坐标间距', () => {
   const { timeline } = editor([]);
   const size = timeline.noteWidth(createNote(1, 0, 0));
   const spacing = timeline.horizontal(135) - timeline.horizontal(0);
   timeline.notesCanvas.clientWidth = 1224; timeline.notesOnly = true;
-  assert.equal(timeline.noteWidth(createNote(1, 0, 0)) / size, 1224 / 600);
+  assert.ok(Math.abs(timeline.noteWidth(createNote(1, 0, 0)) / size - 1224 / 600 * .9) < 1e-10);
   assert.ok(Math.abs((timeline.horizontal(135) - timeline.horizontal(0)) / spacing - 1224 / 600) < 1e-10);
 });
 
@@ -63,20 +63,19 @@ test('编辑区皮肤音符的实际绘制宽高随分辨率等比变化，单�
   assert.equal(calls[2][4], calls[1][4]);
 });
 
-test('点击不吸附，拖拽不越界；界外可见音符可拾取拉回，不显示远处音符的边缘替身', () => {
+test('点击不吸附，拖拽不限制横坐标；界外可见音符可拾取拉回，不显示远处音符的边缘替身', () => {
   const { session, timeline } = editor([createNote(1, 2, -730)]);
   const start = pointer(timeline.horizontal(-730), timeline.vertical(2));
   assert.ok(timeline.hit({ x: start.clientX, y: start.clientY }));
   timeline.down(start); assert.equal(timeline.movedNote(session.notes[0]).positionX, -730); timeline.up(start);
   assert.equal(session.notes[0].positionX, -730);
   timeline.down(start); timeline.move(pointer(timeline.horizontal(900), start.clientY)); timeline.up(pointer(timeline.horizontal(900), start.clientY));
-  assert.equal(session.notes[0].positionX, 675);
+  assert.equal(session.notes[0].positionX, 945);
   assert.equal(timeline.clampNoteHorizontal(timeline.horizontal(-3000), 68), null);
   assert.equal(timeline.clampNoteHorizontal(timeline.horizontal(-675), 68), timeline.horizontal(-675));
   for (const count of [10, 11, 10.5]) {
     timeline.gridCount = count;
-    assert.equal(timeline.notePositionAt(timeline.horizontal(-675)), -675);
-    assert.equal(timeline.notePositionAt(timeline.horizontal(675)), 675);
+    for (const position of [-2000, -675, 675, 2000]) assert.equal(timeline.notePositionAt(timeline.horizontal(position)), timeline.snapXPosition(position));
   }
 });
 

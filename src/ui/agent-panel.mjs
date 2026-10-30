@@ -1,5 +1,5 @@
 import { AgentCommands, AGENT_API_VERSION } from '../core/agent-commands.mjs';
-import { DEFAULT_AGENT_PROMPT } from '../core/agent-prompt.mjs';
+import { DEFAULT_AGENT_PROMPT, migrateAgentPrompt } from '../core/agent-prompt.mjs';
 import { EditorAgent } from '../application/agent.mjs';
 import { createAgentEditorCommands } from '../application/agent-editor.mjs';
 import { AgentProviders, createCompatibleProvider } from '../platform/agent-provider.mjs';
@@ -25,6 +25,7 @@ export function agentSettings(saved = {}) {
   if (!Number.isInteger(settings.contextBudget) || settings.contextBudget !== 0 && (settings.contextBudget < 8192 || settings.contextBudget > 16777216)) settings.contextBudget = 0;
   if (!saved?.uiVersion && saved?.maxTokens === 8192) settings.maxTokens = 65536;
   Object.assign(settings, agentProfileSettings({ ...settings, ...saved, ...(!Array.isArray(saved.profiles) ? { maxTokens: settings.maxTokens, contextBudget: settings.contextBudget } : {}) }));
+  settings.prompt = migrateAgentPrompt(settings.prompt);
   settings.uiVersion = 5; return settings;
 }
 const dataUrl = blob => new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = () => reject(reader.error); reader.readAsDataURL(blob); });

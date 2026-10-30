@@ -27,7 +27,7 @@ export function noiseTrackingTarget(chart, tempo, target) {
 }
 
 // Event boundaries split the fit so a jump cannot become a short diagonal move.
-function trackingCuts(chart, tempo, source, start, end) {
+export function trackingCuts(chart, tempo, source, start, end) {
   const cuts = new Set([start, end]); const seen = new Set();
   const include = seconds => { if (seconds > start && seconds < end) cuts.add(seconds); };
   let index = chart.judgeLineList.indexOf(source.line);
@@ -50,7 +50,7 @@ function trackingCuts(chart, tempo, source, start, end) {
   return [...cuts].sort((a, b) => a - b);
 }
 
-function simplify(samples, positionTolerance, angleTolerance) {
+export function simplifyTrackingSamples(samples, positionTolerance, angleTolerance) {
   const keep = new Set([0, samples.length - 1]); const pending = [[0, samples.length - 1]];
   while (pending.length) {
     const [first, last] = pending.pop(); const a = samples[first]; const b = samples[last]; let worst = 1; let at = -1;
@@ -100,7 +100,7 @@ export function trackedNoiseArea(chart, tempo, options) {
     const count = Math.max(1, Math.ceil((last - first) * sampleRate)); const samples = [a];
     for (let step = 1; step < count; step++) samples.push(read(first + (last - first) * step / count));
     samples.push({ ...(discontinuity ? left : at), seconds: last });
-    const reduced = simplify(samples, 0.2, 0.02);
+    const reduced = simplifyTrackingSamples(samples, 0.2, 0.02);
     for (let step = 1; step < reduced.length; step++) append(reduced[step - 1], reduced[step]);
     // Adjacent events may have different endpoint values; the next start is the jump.
     if (index === cuts.length - 2 && discontinuity) append(samples.at(-1), at, last, last);

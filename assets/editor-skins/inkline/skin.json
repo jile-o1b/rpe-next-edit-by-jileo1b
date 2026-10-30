@@ -1232,7 +1232,7 @@
       }
     },
     {
-      "selector": "@pitch-control,@toolbar > label:has(#snap-x),@view-controls label:has(#realtime-enabled)",
+      "selector": "@pitch-control,@toolbar > label:has(#snap-x),@toolbar > .direct-placement-control,@view-controls label:has(#realtime-enabled)",
       "set": {
         "position": "relative",
         "height": "32px",
@@ -1248,14 +1248,14 @@
       }
     },
     {
-      "selector": "@pitch-control:hover,@toolbar > label:has(#snap-x):hover,@view-controls label:has(#realtime-enabled):hover",
+      "selector": "@pitch-control:hover,@toolbar > label:has(#snap-x):hover,@toolbar > .direct-placement-control:hover,@view-controls label:has(#realtime-enabled):hover",
       "set": {
         "color": "var(--rpen-ink-text)",
         "border-color": "var(--rpen-ink-field-hover)"
       }
     },
     {
-      "selector": "@pitch-control:has(input:checked),@toolbar > label:has(#snap-x:checked),@view-controls label:has(#realtime-enabled:checked)",
+      "selector": "@pitch-control:has(input:checked),@toolbar > label:has(#snap-x:checked),@toolbar > .direct-placement-control:has(input:checked),@view-controls label:has(#realtime-enabled:checked)",
       "set": {
         "color": "var(--rpen-ink-accent-text)",
         "background": "color-mix(in srgb, var(--rpen-ink-accent) 12%, transparent)",
@@ -1263,14 +1263,14 @@
       }
     },
     {
-      "selector": "@pitch-control:has(input:focus-visible),@toolbar > label:has(#snap-x:focus-visible),@view-controls label:has(#realtime-enabled:focus-visible)",
+      "selector": "@pitch-control:has(input:focus-visible),@toolbar > label:has(#snap-x:focus-visible),@toolbar > .direct-placement-control:has(input:focus-visible),@view-controls label:has(#realtime-enabled:focus-visible)",
       "set": {
         "outline": "2px solid color-mix(in srgb, var(--rpen-ink-accent) 69%, transparent)",
         "outline-offset": "1px"
       }
     },
     {
-      "selector": "@pitch-control input,@toolbar > label:has(#snap-x) input,@view-controls label:has(#realtime-enabled) input",
+      "selector": "@pitch-control input,@toolbar > label:has(#snap-x) input,@toolbar > .direct-placement-control input,@view-controls label:has(#realtime-enabled) input",
       "set": {
         "position": "absolute",
         "opacity": "0",
@@ -1417,6 +1417,12 @@
       "selector": "@toolbar label.y-scale-control",
       "set": {
         "margin-left": "auto"
+      }
+    },
+    {
+      "selector": "@toolbar > .direct-placement-control",
+      "set": {
+        "margin-left": "max(16px, var(--rpen-placement-align-gap, 16px))"
       }
     },
     {
@@ -1843,7 +1849,7 @@
       }
     },
     {
-      "selector": "#performance,@footer > span:last-child",
+      "selector": "#performance,@app-version",
       "set": {
         "color": "var(--rpen-ink-text-64)"
       }
@@ -3764,7 +3770,8 @@
         "curve-trajectory",
         "text-lines-tool",
         "noise-fit-tool",
-        "noise-tracking-tool"
+        "noise-tracking-tool",
+        "note-tracking-tool"
       ]
     },
     {

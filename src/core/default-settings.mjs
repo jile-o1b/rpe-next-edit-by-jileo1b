@@ -29,6 +29,11 @@ export const DEFAULT_SETTINGS = Object.freeze({
 });
 
 export const DEFAULT_EDITOR_PREFERENCES = Object.freeze({
+  "overlappingLinePicker": true,
+  "directPlacement": false,
+  "placementOpacity": 0.5,
+  "noteSpacing": 1,
+  "notesOnlyNoteScale": 0.9,
   "selectionInterval": 1,
   "viewportOverflow": false,
   "overflowBlur": 25,

@@ -1,5 +1,5 @@
 import { remapShaderLines } from '../core/shader-events.mjs';
-import { createLine } from '../core/chart.mjs';
+import { createPlacedLine } from '../core/placement-defaults.mjs';
 import { t } from '../i18n.mjs';
 
 export const MAX_BATCH_LINE_COUNT = 10000;
@@ -9,11 +9,11 @@ export function validateLineCount(count, current = 0) {
   if (count > current && count > MAX_BATCH_LINE_COUNT) throw new Error(t('line-commands.s90c27c6', { p0: MAX_BATCH_LINE_COUNT }));
 }
 
-export function ensureLineCount(chart, count) {
+export function ensureLineCount(chart, count, defaults) {
   const lines = chart.judgeLineList ?? [];
   validateLineCount(count, lines.length);
   if (count <= lines.length) return chart;
-  return { ...chart, judgeLineList: [...lines, ...Array.from({ length: count - lines.length }, (_, index) => createLine(`Line ${lines.length + index + 1}`))] };
+  return { ...chart, judgeLineList: [...lines, ...Array.from({ length: count - lines.length }, (_, index) => createPlacedLine(`Line ${lines.length + index + 1}`, defaults))] };
 }
 
 function requireLine(chart, index) {

@@ -1,9 +1,9 @@
 import { beatValue, fromNumber } from './beat.mjs';
-import { createNote } from './chart.mjs';
+import { createPlacedNote } from './placement-defaults.mjs';
 import { easing } from './easing.mjs';
 import { t } from '../i18n.mjs';
 
-export function generateCurveNotes({ startTime, endTime, startX, endX, type = 4, division = 4, density = 1, easingType = 1 }) {
+export function generateCurveNotes({ startTime, endTime, startX, endX, type = 4, division = 4, density = 1, easingType = 1, noteDefaults }) {
   const start = beatValue(startTime); const end = beatValue(endTime);
   if (start < 0 || end < start) throw new Error(t('curve-notes.s0deb132'));
   if (![startX, endX, density, division].every(Number.isFinite) || density <= 0 || density > 1000 || division < 1 || division > 100) throw new Error(t('curve-notes.sa70194c'));
@@ -15,6 +15,6 @@ export function generateCurveNotes({ startTime, endTime, startX, endX, type = 4,
     const amount = start === end ? (index + 1) / (density + 1) : (index + 1) / denominator / (end - start);
     const position = startX + (endX - startX) * (start === end ? amount : easing(amount, easingType));
     const beat = start === end ? [...startTime] : fromNumber(start + (index + 1) / denominator, denominator * startTime[2]);
-    return { ...createNote(type, 0, position), startTime: beat, endTime: [...beat] };
+    return { ...createPlacedNote(type, 0, position, undefined, noteDefaults), startTime: beat, endTime: [...beat] };
   });
 }

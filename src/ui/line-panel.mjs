@@ -1,4 +1,3 @@
-import { createLine } from '../core/chart.mjs';
 import { groupLineIndices, groupNames, lineDisplayLabel, lineFeatureLabels, lineGroupIndex, lineGroupName, lineNameLabel, reservedLineGroupName } from '../core/line-groups.mjs';
 import { deleteLine, duplicateLine, reorderLine, setLineParent, ensureLineCount, validateLineCount, MAX_BATCH_LINE_COUNT } from '../application/line-commands.mjs';
 import { UI_BINDINGS } from '../core/game-ui.mjs';
@@ -85,7 +84,7 @@ export class LinePanel {
       try {
         const { count, current } = read();
         if (count <= current) { refresh(); return; }
-        this.commit(t('line-panel.s0c83ead'), ensureLineCount(session.chart, count), current);
+        this.commit(t('line-panel.s0c83ead'), ensureLineCount(session.chart, count, session.lineEventDefaults), current);
         document.querySelector('#modal').close();
       } catch (failure) { error.textContent = failure.message; }
     };
@@ -102,7 +101,7 @@ export class LinePanel {
     const title = document.createElement('div'); title.className = 'panel-title'; const titleCount = document.createElement('small'); titleCount.textContent = t('line-panel.sfac04ca', { p0: lines.length }); title.append(t('transport.line'), titleCount);
     this.host.append(title);
     const actions = document.createElement('div'); actions.className = 'line-panel-actions';
-    const add = document.createElement('button'); add.type = 'button'; add.textContent = t('line-panel.s119c201'); add.onclick = () => { const index = lines.length; this.commit(t('line-panel.s665c6b7'), { ...chart, judgeLineList: [...lines, createLine(`Line ${index + 1}`)] }, index); };
+    const add = document.createElement('button'); add.type = 'button'; add.textContent = t('line-panel.s119c201'); add.onclick = () => { const index = lines.length; this.commit(t('line-panel.s665c6b7'), { ...chart, judgeLineList: [...lines, session.createLine(`Line ${index + 1}`)] }, index); };
     const batchAdd = document.createElement('button'); batchAdd.type = 'button'; batchAdd.textContent = t('line-panel.s893758c'); batchAdd.onclick = () => this.addLinesDialog();
     const duplicate = document.createElement('button'); duplicate.type = 'button'; duplicate.textContent = t('line-panel.s4edd1d0'); duplicate.disabled = !session.line; duplicate.onclick = () => this.commit(t('line-panel.s745900a'), duplicateLine(chart, session.lineIndex), lines.length);
     const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = t('line-panel.s3755f56'); remove.disabled = lines.length <= 1 || !session.line; remove.onclick = () => this.commit(t('line-panel.s6245754'), deleteLine(chart, session.lineIndex), Math.max(0, session.lineIndex - 1));

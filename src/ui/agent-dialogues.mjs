@@ -6,6 +6,8 @@ import { AGENT_CORE_TOOLS, agentContextPolicy, agentContextUsage, agentContextSi
 import { t } from '../i18n.mjs';
 import { agentEffortLabel } from '../core/agent-routing.mjs';
 import { AgentRoutingControls } from './agent-routing-controls.mjs';
+import { agentUserMessage, agentTurnImages, AGENT_IMAGE_LIMITS } from '../core/agent-images.mjs';
+import { prepareAgentImage, imageCards } from './agent-images.mjs';
 
 const text = (tag, value, className = '') => { const node = document.createElement(tag); node.textContent = value; node.className = className; return node; };
 const button = (label, action) => { const node = text('button', label); node.type = 'button'; node.onclick = action; return node; };
@@ -91,12 +93,14 @@ export class AgentDialogues {
       else if (['ArrowDown', 'PageDown', 'End'].includes(event.key)) { state.direction = 1; if (event.key === 'End') state.follow = true; }
     });
     this.composer = document.createElement('form'); this.composer.className = 'agent-composer'; panel.input = document.createElement('textarea'); panel.input.rows = 2; panel.input.placeholder = t('agent-dialogues.s9198919'); panel.input.setAttribute('aria-label', t('agent-dialogues.s563f395'));
+    this.attachments = text('div', '', 'agent-image-list agent-composer-images'); this.attachments.hidden = true;
+    panel.input.addEventListener('paste', event => this.pasteImages(event));
     panel.input.oninput = () => { this.store.current.draft = panel.input.value; this.save(); this.updateBusy(); };
     panel.input.onkeydown = event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); this.composer.requestSubmit(); } };
     const actions = text('div', '', 'agent-composer-actions'); panel.send = button(t('agent-dialogues.s1214d63'), () => {}); panel.send.type = 'submit'; panel.stop = button(t('agent-dialogues.sa17f70a'), () => { this.pauseQueue(); panel.agent.stop(); }); panel.stop.hidden = true;
     this.interruptButton = button(t('agent-dialogues.s90de0b5'), () => this.interrupt(panel.input.value)); this.interruptButton.hidden = true; actions.append(panel.status, this.routing.toggle, panel.send, this.interruptButton, panel.stop, this.routing.menu);
     this.resumeQueue = button(t('agent-dialogues.s39faf0c'), () => { for (const { turn } of this.queued()) { turn.paused = false; this.save(turn); } this.autoQueue = true; this.drain(); }); this.resumeQueue.className = 'agent-queue-resume'; this.resumeQueue.hidden = true;
-    this.composer.append(panel.input, actions); this.composer.onsubmit = event => { event.preventDefault(); this.send(panel.input.value); };
+    this.composer.append(this.attachments, panel.input, actions); this.composer.onsubmit = event => { event.preventDefault(); this.send(panel.input.value); };
     panel.host.append(topbar, controls, this.background, this.viewport, this.resumeQueue, this.composer); this.updateRouting();
   }
   bind(agent) {
@@ -226,6 +230,7 @@ export class AgentDialogues {
       showAgentExchange(target, id => this.activeExchanges.get(id) ?? this.repository?.trace(id));
     }); inspect.className = 'agent-turn-inspect'; inspect.title = t('agent-dialogues.s5b586d9'); inspect.setAttribute('aria-label', inspect.title); inspect.disabled = !turn.exchanges?.length && !turn.linkedTurn; root.append(inspect);
     const user = this.message(t('agent-dialogues.s5630b88'), turn.text, 'agent-user-message'); root.append(user);
+    const images = agentTurnImages(turn); if (images.length) { const gallery = text('div', '', 'agent-image-list'); imageCards(gallery, images); user.querySelector('.agent-message-body').prepend(gallery); }
     const work = detail(t('agent-dialogues.s78e1831')); work.className = 'agent-turn-work'; work.open = turn.status === 'running'; const workContent = text('div', '', 'agent-work-content'); work.append(workContent);
     const answer = this.message('AI', '', 'agent-turn-answer'); answer.hidden = !turn.answer && !turn.error; const answerContent = answer.querySelector('.agent-message-body');
     if (turn.answer) renderAgentMarkdown(answerContent, turn.answer);
@@ -243,7 +248,7 @@ export class AgentDialogues {
     for (const entry of turn.process ?? []) {
       if (entry.kind === 'tool') workContent.append(this.jsonDetail(entry.name, { arguments: entry.arguments, result: entry.result }));
       else if (entry.kind === 'question') { const question = detail(t('agent-dialogues.s610ec6d')); question.append(text('p', entry.question), text('p', entry.answer)); workContent.append(question); }
-      else if (entry.kind === 'steering') { const message = this.message(entry.pending ? t('agent-dialogues.s52cb13d') : t('agent-dialogues.see71941'), entry.text, 'agent-user-message'); if (entry.id) message.dataset.steeringId = entry.id; workContent.append(message); }
+      else if (entry.kind === 'steering') { const message = this.message(entry.pending ? t('agent-dialogues.s52cb13d') : t('agent-dialogues.see71941'), entry.text, 'agent-user-message'); if (entry.id) message.dataset.steeringId = entry.id; if (entry.images?.length) { const gallery = text('div', '', 'agent-image-list'); imageCards(gallery, entry.images); message.querySelector('.agent-message-body').prepend(gallery); } workContent.append(message); }
       else if (entry.kind === 'compaction') workContent.append(this.jsonDetail(t('agent-dialogues.sc8798fb'), entry));
       else {
         if (!entry.text && !entry.reasoning) continue;
@@ -269,6 +274,7 @@ export class AgentDialogues {
     const previous = this.store.records.get(this.visibleId); if (previous) previous.draft = this.panel.input.value;
     const previousScroll = this.scrollStates.get(this.visibleId); if (previousScroll) previousScroll.top = this.viewport.scrollTop;
     const record = this.store.select(id); this.viewport.replaceChildren(this.recordView(record)); this.panel.input.value = record.draft;
+    this.renderImages();
     this.visibleId = id;
     this.contextMode.value = record.context.mode; this.contextCount.value = record.context.turns; this.contextCount.hidden = record.context.mode !== 'last'; this.updateChoices(); this.updateStatus(); this.updateContextUsage();
     const state = this.scrollState(); this.viewport.scrollTop = state.follow ? this.viewport.scrollHeight : state.top; state.top = this.viewport.scrollTop; state.bottom = Math.max(0, this.viewport.scrollHeight - this.viewport.clientHeight); state.direction = 0;
@@ -279,8 +285,8 @@ export class AgentDialogues {
   }
   updateBusy() {
     const busy = Boolean(this.panel.agent?.busy), loading = Boolean(this.loading);
-    this.panel.send.hidden = false; this.panel.send.textContent = busy ? t('agent-dialogues.s91255f6') : t('agent-dialogues.s1214d63'); this.panel.send.disabled = loading;
-    this.panel.stop.hidden = !busy; this.interruptButton.hidden = !busy; this.interruptButton.disabled = !this.panel.input.value.trim() || this.running?.record !== this.store.current;
+    this.panel.send.hidden = false; this.panel.send.textContent = busy ? t('agent-dialogues.s91255f6') : t('agent-dialogues.s1214d63'); this.panel.send.disabled = loading || Boolean(this.store.current.preparingImages);
+    this.panel.stop.hidden = !busy; this.interruptButton.hidden = !busy; this.interruptButton.disabled = (!this.panel.input.value.trim() && !this.store.current.draftImages?.length) || Boolean(this.store.current.preparingImages) || this.running?.record !== this.store.current;
     this.panel.configure.disabled = this.panel.permission.disabled = busy || loading || this.panel.keyLoading; this.panel.input.disabled = loading;
     this.routing.updateBusy(Boolean(busy || loading || this.panel.keyLoading));
     this.contextMode.disabled = this.contextCount.disabled = this.select.disabled = this.panel.clear.disabled = loading;
@@ -301,6 +307,7 @@ export class AgentDialogues {
   }
   updateRouting() {
     this.routing?.update();
+    if (this.panel.input) this.panel.input.title = t('agent-images.pasteHint');
   }
   updateContextUsage() {
     if (!this.usage || !this.panel.agent) return;
@@ -322,13 +329,32 @@ export class AgentDialogues {
     this.usage.title = t('agent-dialogues.s876fd01', { p0: usage.estimated ? t('agent-dialogues.sb73b8f5') : t('agent-dialogues.sf8a1d52'), p1: usage.tokens.toLocaleString(), p2: usage.contextWindow.toLocaleString(), p3: policy.automatic ? t('agent-dialogues.s2f62b56') + policy.threshold.toLocaleString() : t('agent-dialogues.sa0822b0') });
     this.usage.setAttribute('aria-valuemax', String(usage.contextWindow)); this.usage.setAttribute('aria-valuenow', String(usage.tokens)); this.usage.setAttribute('aria-valuetext', this.usage.title);
   }
-  async send(source, instruction = '', { compactOnly = false } = {}) {
+  renderImages() { if (this.attachments) imageCards(this.attachments, this.store.current.draftImages, index => { this.store.current.draftImages.splice(index, 1); this.renderImages(); this.save(); this.updateBusy(); }); }
+  async pasteImages(event) {
+    const files = [...(event.clipboardData?.items ?? [])].filter(item => item.kind === 'file' && item.type.startsWith('image/')).map(item => item.getAsFile()).filter(Boolean);
+    if (!files.length) return;
+    event.preventDefault(); event.stopPropagation();
+    const record = this.store.current, generation = this.generation;
+    if ((record.draftImages?.length ?? 0) + (record.preparingImages ?? 0) + files.length > AGENT_IMAGE_LIMITS.count) { this.panel.notify(t('agent-images.limit'), 'warning'); return; }
+    record.preparingImages = (record.preparingImages ?? 0) + files.length; this.updateBusy();
+    try {
+      if (!this.panel.capabilities().images) await this.panel.refreshCapabilities();
+      if (this.generation !== generation || this.store.records.get(record.id) !== record) return;
+      if (!this.panel.capabilities().images) { this.panel.notify(t('agent-images.unsupported'), 'warning'); return; }
+      const images = await Promise.all(files.map(prepareAgentImage));
+      if (this.generation !== generation || this.store.records.get(record.id) !== record) return;
+      record.draftImages ??= []; record.draftImages.push(...images); this.save(); if (this.store.current === record) this.renderImages();
+    } catch (error) { this.panel.notify(error.message, 'error'); }
+    finally { record.preparingImages = Math.max(0, (record.preparingImages ?? 0) - files.length); this.updateBusy(); }
+  }
+  async send(source, instruction = '', { compactOnly = false, images: suppliedImages } = {}) {
     const generation = this.generation, selected = this.store.selected; await Promise.all([this.panel.credentialsReady, this.ready]); if (generation !== this.generation) return;
-    const panel = this.panel, record = this.store.records.get(selected) ?? this.store.current, value = compactOnly ? t('agent-dialogues.s14a8486') : source.trim(); if (!value) return;
+    const panel = this.panel, record = this.store.records.get(selected) ?? this.store.current, images = compactOnly ? [] : suppliedImages ?? record.draftImages ?? [], value = compactOnly ? t('agent-dialogues.s14a8486') : source.trim() || (images.length ? t('agent-images.prompt') : ''); if (!value || record.preparingImages) return;
     if (!panel.key) { panel.configuration(); return; }
-    const turn = { id: crypto.randomUUID(), text: value, instruction, compactOnly, status: 'queued', process: [], messages: compactOnly ? [] : [{ role: 'user', content: value }], answer: '', createdAt: Date.now(), queueOrder: Date.now() + (this.sequence = (this.sequence ?? 0) + 1) / 1000 };
+    if (images.length && !panel.capabilities().images) { panel.notify(t('agent-images.unsupported'), 'warning'); return; }
+    const turn = { id: crypto.randomUUID(), text: value, instruction, compactOnly, imageNames: images.map(({ url, ...meta }) => meta), status: 'queued', process: [], messages: compactOnly ? [] : [agentUserMessage(value, images)], answer: '', createdAt: Date.now(), queueOrder: Date.now() + (this.sequence = (this.sequence ?? 0) + 1) / 1000 };
     if (!record.turns.length && record.title === t('agent-dialogues.s1b7abf9')) record.title = value.replace(/\s+/g, ' ').slice(0, 24);
-    const parent = this.recordView(record); record.turns.push(turn); this.turnView(record, turn, parent); if (this.store.current === record && !compactOnly) panel.input.value = ''; record.draft = ''; this.save(turn); this.autoQueue = true; this.updateChoices(); this.updateBusy(); this.scroll(true); this.drain();
+    const parent = this.recordView(record); record.turns.push(turn); this.turnView(record, turn, parent); if (this.store.current === record && !compactOnly) panel.input.value = ''; record.draft = ''; if (!compactOnly && suppliedImages === undefined) { record.draftImages = []; if (this.store.current === record) this.renderImages(); } this.save(turn); this.autoQueue = true; this.updateChoices(); this.updateBusy(); this.scroll(true); this.drain();
   }
   queued() { return [...this.store.records.values()].flatMap(record => record.turns.filter(turn => turn.status === 'queued').map(turn => ({ record, turn }))).sort((first, second) => (first.turn.queueOrder ?? first.turn.createdAt) - (second.turn.queueOrder ?? second.turn.createdAt)); }
   pauseQueue() { this.autoQueue = false; for (const { turn, record } of this.queued()) { turn.paused = true; this.save(turn); this.refreshTurn(record, turn); } this.updateBusy(); }
@@ -339,15 +365,19 @@ export class AgentDialogues {
   }
   compact() { if (!this.panel.agent.busy) return this.send('', '', { compactOnly: true }); }
   interrupt(source, queued, record = this.store.current) {
-    const value = source.trim(); if (!value || this.running?.record !== record || !this.panel.agent.steer(value)) return;
+    const images = queued ? agentTurnImages(queued) : record.draftImages ?? [], value = source.trim() || (images.length ? t('agent-images.prompt') : ''); if (!value || record.preparingImages || this.running?.record !== record) return;
+    if (images.length && !this.panel.capabilities().images) { this.panel.notify(t('agent-images.unsupported'), 'warning'); return; }
+    if (!this.panel.agent.steer(value, images)) return;
     let supplement = queued;
-    if (queued) { queued.status = 'steered'; queued.messages = []; queued.linkedTurn = this.running.turn.id; this.save(queued); this.refreshTurn(record, queued); }
+    if (queued) { queued.status = 'steered'; queued.linkedTurn = this.running.turn.id; this.save(queued); this.refreshTurn(record, queued); }
     else {
       const turn = { id: crypto.randomUUID(), text: value, status: 'steered', linkedTurn: this.running.turn.id, process: [], messages: [], answer: '', createdAt: Date.now() };
-      const parent = this.recordView(record); record.turns.push(turn); this.turnView(record, turn, parent); this.panel.input.value = ''; record.draft = ''; this.save(turn); supplement = turn;
+      turn.messages = [agentUserMessage(value, images)]; turn.imageNames = images.map(({ url, ...meta }) => meta);
+      const parent = this.recordView(record); record.turns.push(turn); this.turnView(record, turn, parent); this.panel.input.value = ''; record.draft = ''; record.draftImages = []; this.renderImages(); this.save(turn); supplement = turn;
     }
-    const entry = { kind: 'steering', id: supplement.id, text: value, pending: true }; this.running.turn.process.push(entry);
+    const entry = { kind: 'steering', id: supplement.id, text: value, images, pending: true }; this.running.turn.process.push(entry);
     const message = this.message(t('agent-dialogues.s52cb13d'), value, 'agent-user-message'); message.dataset.steeringId = entry.id; this.running.view.workContent.append(message); this.running.view.work.open = true; this.save(this.running.turn);
+    if (images.length) { const gallery = text('div', '', 'agent-image-list'); imageCards(gallery, images); message.querySelector('.agent-message-body').prepend(gallery); }
     this.updateBusy(); this.updateStatus(t('agent-dialogues.s42b6876'));
   }
   async start(record, turn) {
@@ -355,20 +385,22 @@ export class AgentDialogues {
     const view = this.refreshTurn(record, turn); view.actions.hidden = true; view.work.hidden = false; view.work.open = true;
     this.running = { record, turn, view, store: this.store, repository: this.repository, contextMode: record.context.mode }; this.save(turn); this.updateChoices(); this.updateBusy();
     this.elapsedTimer = setInterval(() => { if (this.running?.turn === turn) view.meta.textContent = t('agent-dialogues.s8bc996b', { p0: panel.settings.model, p1: time(panel.agent.elapsedMs()) }); }, 250);
-    try { await panel.agent.run(turn.compactOnly ? '' : turn.text, { history, instruction: turn.instruction, compactOnly: turn.compactOnly }); }
+    try { await panel.agent.run(turn.compactOnly ? '' : turn.text, { history, instruction: turn.instruction, compactOnly: turn.compactOnly, images: agentTurnImages(turn) }); }
     catch (error) { clearInterval(this.elapsedTimer); this.elapsedTimer = null; turn.status = 'failed'; turn.error = error.message; view.answer.hidden = false; view.answerContent.textContent = error.message; view.actions.hidden = false; view.work.open = false; this.running = null; this.pauseQueue(); this.save(turn); this.updateBusy(); this.updateStatus(); }
   }
   edit(record, turn, user) {
     if (this.panel.agent.busy || user.querySelector('textarea')) return;
     const edit = document.createElement('textarea'); edit.className = 'agent-history-editor'; edit.value = turn.text; edit.setAttribute('aria-label', t('agent-dialogues.s0ef9d53')); const actions = text('div', '', 'agent-actions');
     const hint = text('small', t('agent-dialogues.s10fffe4'), 'hint');
-    actions.append(button(t('agent-dialogues.sa4e6f10'), () => this.resend(record, turn, edit.value)), button(t('agent-dialogues.s4d0b468'), () => { edit.remove(); actions.remove(); hint.remove(); })); this.expandMessage(user, true); user.querySelector('.agent-message-body').append(edit, hint, actions); edit.focus();
+    const images = agentTurnImages(turn), gallery = text('div', '', 'agent-image-list'); const refresh = () => imageCards(gallery, images, index => { images.splice(index, 1); refresh(); }); refresh();
+    actions.append(button(t('agent-dialogues.sa4e6f10'), () => this.resend(record, turn, edit.value, { images })), button(t('agent-dialogues.s4d0b468'), () => { edit.remove(); actions.remove(); hint.remove(); gallery.remove(); })); this.expandMessage(user, true); user.querySelector('.agent-message-body').append(edit, gallery, hint, actions); edit.focus();
   }
-  async resend(record, turn, source, { compactOnly = false } = {}) {
+  async resend(record, turn, source, { compactOnly = false, images = agentTurnImages(turn) } = {}) {
     if (this.panel.agent.busy || this.loading || !source.trim()) return;
     const generation = this.generation; await Promise.all([this.panel.credentialsReady, this.ready]);
     if (generation !== this.generation || this.panel.agent.busy || this.loading || this.store.records.get(record.id) !== record || !record.turns.includes(turn)) return;
     if (!this.panel.key) { this.panel.configuration(); return; }
+    if (images.length && !this.panel.capabilities().images) { this.panel.notify(t('agent-images.unsupported'), 'warning'); return; }
     const removed = this.store.truncate(record.id, record.turns.indexOf(turn));
     for (const entry of removed) {
       this.turnViews.get(entry)?.root.remove(); this.turnViews.delete(entry); this.dirtyTurns.delete(entry);
@@ -376,7 +408,7 @@ export class AgentDialogues {
     }
     if (!record.memory) this.dirtyMemories.delete(record);
     this.scrollStates.delete(record.id); this.show(record.id); record.draft = ''; this.panel.input.value = ''; this.save();
-    return this.send(source, t('agent-dialogues.s1f0d516'), { compactOnly });
+    return this.send(source, t('agent-dialogues.s1f0d516'), { compactOnly, images });
   }
   fold(open) { for (const turn of this.recordView(this.store.current).querySelectorAll('.agent-turn')) { this.expandMessage(turn.querySelector('.agent-user-message'), open); this.expandMessage(turn.querySelector('.agent-turn-answer'), open); turn.querySelector('.agent-turn-work').open = open; } }
   manage() {

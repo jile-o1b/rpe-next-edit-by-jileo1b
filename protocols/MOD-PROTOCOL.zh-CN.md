@@ -239,6 +239,22 @@ export function activate(api) {
 
 `editor.raw` 提供更底层入口：实时 `session/chart/assets/tempo`、`renderSession/replaceChart/activatePane/togglePlayback/togglePreview/save/applyDisplaySettings/persistEditor/setHome`。`raw.chart=` 直接替换历史当前文档并通知，**不增加撤销记录**；`raw.tempo=` 更新时间轴 TempoMap。其他内部一致性由作者负责，优先使用普通 commit。可以通过任意 DOM/Web API、内部 ES 模块、类原型与这些入口继续扩展，宿主不限制为本节列出的功能。
 
+`editor.directPlacement` 是直接放置面板实例，属于进阶实现接口：`active` 表示是否展开，`open(lineIndex)` 在预览中展开当前线的音符编辑区，`close()` 关闭。它复用原 `editor.timeline` 与音符画布，通过 `timeline.noteView` 映射指针和绘制坐标，临时停用多线编辑，关闭后恢复；扩展交互应调用时间轴的 `point/noteHorizontal/notePositionAt/vertical`，不要直接用旋转后的 DOM 外接矩形换算。音符横坐标不限制在 −675～675。`beginPreviewSession()` 会先关闭直接放置和重合线列表。
+
+`editor.quickCurve` 与 `editor.noteTrackingPanel` 是进阶实现入口。单选音符长按中键进入曲线填充时，数字键和 Q/W/E/R/Esc 由临时交互消费，Shift+中键及短按仍保留框选；生成前只使用临时预览，不增加历史。音符追踪通过 `note_track` 命令或原生临时页面生成普通事件，默认使用当前线和当前事件层，不新增谱面字段。`timeline.noteSpacing` 为持久化横向间距比例，默认 1；扩展拖拽应调用 `horizontalScale/notePositionAt/noteHorizontal`，不要假设可见横坐标固定为 −675～675，也不要用此比例调整贴图大小。`timeline.notesOnlyNoteScale` 为单线仅音符视图的视觉缩放，默认 0.9；`referenceNoteScale` 保持坐标布局基准，实际音符宽高使用 `renderNoteScale`。
+
+右键默认值面板为 `editor.placementDefaultsPanel`。`editor.session.noteDefaults` 仅属于当前编辑会话，退出谱面时重置；`lineEventDefaults` 由编辑器偏好层跨谱面和重启保存。创建物件时可调用 `session.createNote(type, beat, positionX, endBeat?)`、`session.createLine(name?)` 使用这两组默认值，返回物件后仍须正常提交。默认值不写入谱面、不占用撤销历史，也不自动改动导入、复制或已有物件。底层 `core/chart.mjs` 的 `createNote/createLine` 继续返回固定的格式默认值，适合导入和明确控制属性的算法；两组构造入口不要混淆。`ensureLineCount(chart, count, lineEventDefaults?)` 的第三个参数可将同一套默认值用于批量新线。
+
+`editor.diagnostics` 提供后台谱面检查。`await diagnostics.waitBasic()` 等待当前版本的基础结果，`diagnostics.issues` 为基础与已完成深度结果的合并列表，`pending/running/progress/deepComplete` 表示状态；`change` 更新结果，`progress` 只更新进度。常规选择和播放循环不应调用同步整谱 `diagnose()`。`startDeep()` 仅在用户主动请求时调用，再次调用取消；谱面、素材、模组、目标或比例变化使深度结果失效。基础 Worker 使用结构共享的增量补丁，不传输音频/图片内容。
+
+`missingBaseline` 为自动警告，仅检查判定线第 0 层的五个基础事件轨道。轨道没有开始拍不晚于 0 的有效事件时产生一项结果；零拍前已经结束的事件和零拍瞬时标记也能提供初始值。结果通过 `line/layer=0/eventType/path/beat=0` 定位缺失的栏，没有物件 `index`、不可删除；上层事件和扩展轨道不补足第 0 层。检测与轨道常规校验共用遍历及缓存。
+
+全局事件校验读取注册列的 `valueType/min/max/overlap` 和模组来源，缺失模组与来源、版本变化会显示提示。深度检查还在独立 Worker 执行列的 `validate(event)`：应使用可独立执行、不依赖 DOM 或外部闭包的函数，可返回 `false`、错误字符串或抛出错误；支持异步返回。修改返回的谱面副本不会写回编辑器。依赖主线程闭包而无法运行的校验器会明确显示未能独立校验，不会当作检查通过。一般 Shader 重叠和合法瞬时事件仍然允许。深度位置检查复用场景、父线、倍率、视窗比例与内置三维摄像机投影；任意自定义后处理 Shader 的像素扭曲不属于几何位置判断。
+
+放置区使用 `noteView.flow` 将秒数映射为速度积分距离，`noteView.sideAt(y)` 返回上区 1 / 下区 -1；`timeline.timeAt(y, side?)` 反算拍点时间，`timeline.noteVertical(note, endpoint='startTime')` 按音符的 above 和首尾拍计算绘制位置，`vertical(beat,height?,side=1)` 可显式选择区。零速/反向段保留可编辑的单调距离轴；与实际预览有偏差时绘制对应连线，不改谱面数据。`preview.noteOpacity` 只乘音符本体透明度，展开期间为 0.3，退出恢复原值；`preview.noteCenterLine` 与 `preview.noteCenters` 仅收集目标线已绘制音符的中心几何，避免额外遍历全部谱面。以上为进阶实现接口，不增加协议版本。
+
+普通音符与放置面板拖拽时，`editor.timeline.previewNotes()` 提供临时的 `Map<线号, Map<音符索引, 音符>>`（无草稿时为 null），不改已提交谱面或撤销历史。原生预览通过 `preview.noteOverrides`、`preview.noteDraft` 对受影响音符增量绘制，保留其余场景索引；包装原生 `drawScene` 的模组会沿用此效果。完全自行绘制音符的模组需自行读取草稿。松开提交或取消后草稿撤回，谱面格式不变。
+
 ### 6.1. 保存、个人设置与平台存储
 
 模组应通过 `api.editor.commit` 修改当前谱面，通过 `addAsset/removeAsset` 更换素材，再用 `await api.editor.save()` 保存。保存不冻结编辑；调用后发生的新修改仍可能处于未保存状态。重复调用会在需要时排队写入更新的快照。`ProjectConflictError` 表示库内项目已被修改或删除，不能通过清空 `storageRevision` 等方式强制覆盖；应保留当前编辑，让用户导出 PEZ 或另存项目。自动保存生成独立恢复副本，不覆盖谱面库项目，没有新修改时不会重复备份。
@@ -317,3 +333,5 @@ API 1 的托管方法、清单和钩子是稳定契约；新增可选字段与�
 `Preview.drawBackground`、`Preview.drawUi` 使用同样的绘制阶段签名，分别位于背景阶段及第一层 shader 后的游戏 UI 阶段。前者支持 center 捕获窗口偏移；后者使用 frame.viewport 定义 UI 的逻辑布局范围，并依赖 frame.states。三维摄像机的“跟随谱面”选项组合这两个可恢复补丁，让背景图片和游戏 UI 参与投影，同时保留它们在 shader 与噪域前后的顺序。
 
 发布前至少验证：导入后不执行、启用及再次启用、修改快捷键、文本输入不穿透、切换谱面、撤销/重做、禁用时清理、依赖/冲突和异常恢复；自定义数据还须验证保存、重开、Next 导出及兼容导出的行为。支持桌面端的模组还应验证更新后设置继承、切换谱面库、大素材保存、冲突或写入失败时保留编辑。替换素材优先提交新的字节数组；保存仍会重新校验可变数组内容，不以对象引用相同作为素材未变化的保证。高自由度来自同页执行能力，可靠性来自模组作者对状态与恢复的完整管理。
+
+编辑器更新入口位于设置的“关于”，更新包的选择、下载、校验与程序替换由宿主负责，没有新增模组安装权限。模组应将用户数据保存至既有谱面、设置或工作区接口，不要写入程序安装目录，也不要依赖安装目录保持不变；宿主重启更新沿用正常的保存、设置写入与关闭流程。

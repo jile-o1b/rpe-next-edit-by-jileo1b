@@ -159,7 +159,7 @@ export function createAgentEditorCommands(commands, editor, { controls, network,
   });
   register('line_manage', t('agent-editor.sd99859f'), agentSchema({ revision: agentText, action: enumeration(['ensure', 'duplicate', 'delete', 'reorder', 'parent']), line: agentIndex, target: agentIndex, count: integer(1, 10000), parent: integer(-1, 10000) }, ['revision', 'action']), 'edit', args => {
     const chart = check(args); let next;
-    if (args.action === 'ensure') next = ensureLineCount(chart, args.count);
+    if (args.action === 'ensure') next = ensureLineCount(chart, args.count, editor.session.lineEventDefaults);
     else if (args.action === 'duplicate') next = duplicateLine(chart, args.line);
     else if (args.action === 'delete') { if (chart.judgeLineList.length <= 1) throw Error(t('agent-editor.sc8b778e')); next = deleteLine(chart, args.line); }
     else if (args.action === 'reorder') next = reorderLine(chart, args.line, args.target);
@@ -206,7 +206,7 @@ export function createAgentEditorCommands(commands, editor, { controls, network,
     const plan = prepareChart(args, chart, next.chart, t('agent-editor.s0f318c0'), { line: args.line, source: result.source, start: result.start, end: result.end, beats, added: next.count, skipped: beats.length - next.count, method: result.method, model: result.model, statistics: result.statistics, focus: result.focus, quantization: args.quantization ?? 'adaptive', candidates: selected }), valid = plan.valid;
     return { ...plan, valid: () => valid() && editor.audio.buffer === originalAudio && editor.audioSources?.revision === sourcesRevision };
   });
-  register('diagnose', t('agent-editor.sb162aaf'), agentSchema({ offset: agentIndex, limit: integer(1, 200) }), 'read', args => ({ apply: () => { const issues = diagnose(current()); return { total: issues.length, issues: issues.slice(args.offset ?? 0, (args.offset ?? 0) + (args.limit ?? 50)) }; } }));
+  register('diagnose', t('agent-editor.sb162aaf'), agentSchema({ offset: agentIndex, limit: integer(1, 200) }), 'read', args => ({ apply: async () => { const issues = editor.diagnostics ? (await editor.diagnostics.waitBasic(), editor.diagnostics.issues) : diagnose(current()); return { total: issues.length, issues: issues.slice(args.offset ?? 0, (args.offset ?? 0) + (args.limit ?? 50)) }; } }));
   register('editor_view', t('agent-editor.scec3192'), agentSchema({ line: agentIndex, layer: integer(0, 3), pane: agentText, playback: enumeration(['play', 'pause']), preview: { type: 'boolean' }, notes: array(agentIndex), events: array(agentText), noise: agentIndex }), 'edit', args => {
     const session = editor.session;
     return { summary: t('agent-editor.s76a018a'), details: args, valid: () => editor.session === session, apply: async () => {

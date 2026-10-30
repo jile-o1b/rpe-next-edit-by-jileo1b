@@ -48,13 +48,17 @@ export function agentContextCut(messages, keep = 10) {
   return cut;
 }
 
-export function trimAgentImages(messages, supported = true) {
-  let bytes = 0, count = 0;
+export function trimAgentImages(messages, supported = true, currentInput) {
+  const protectedMessage = currentInput ? messages.findLast(message => message.rpen_input_images === currentInput && Array.isArray(message.content)) : null;
+  const protectedImages = protectedMessage?.content.filter(part => part.type === 'image_url') ?? [];
+  let bytes = protectedImages.reduce((sum, part) => sum + (part.image_url?.url?.length ?? 0), 0), count = protectedImages.length;
   for (let index = messages.length - 1; index >= 0; index--) {
     const message = messages[index]; if (!Array.isArray(message.content)) continue;
     const images = message.content.filter(part => part.type === 'image_url'); if (!images.length) continue;
+    if (message === protectedMessage && supported) continue;
     bytes += images.reduce((total, part) => total + (part.image_url?.url?.length ?? 0), 0); count += images.length;
-    if (!supported || count > 2 || bytes > 8 * 1024 * 1024) messages[index] = { ...message, content: message.content.filter(part => part.type !== 'image_url').map(part => part.text ?? '').join('\n') + t('agent-context.s197e146') };
+    const limit = protectedImages.length + 2;
+    if (!supported || count > limit || bytes > 8 * 1024 * 1024) messages[index] = { ...message, content: message.content.filter(part => part.type !== 'image_url').map(part => part.text ?? '').join('\n') + t('agent-context.s197e146') };
   }
   return messages;
 }

@@ -29,13 +29,14 @@ export function gameUiBindings(chart, states) {
   return result;
 }
 
-export function scoreAt(completionTimes, seconds) {
+export function scoreAt(completionTimes, seconds, completionDelta = 0) {
   let low = 0; let high = completionTimes.length;
   while (low < high) {
     const middle = Math.floor((low + high) / 2);
     if (completionTimes[middle] < seconds) low = middle + 1; else high = middle;
   }
-  return { combo: low, score: completionTimes.length ? Math.round(1000000 * low / completionTimes.length) : 0 };
+  const combo = Math.max(0, Math.min(completionTimes.length, low + completionDelta));
+  return { combo, score: completionTimes.length ? Math.round(1000000 * combo / completionTimes.length) : 0 };
 }
 
 export function renderPasses(lines, order) {

@@ -3,12 +3,14 @@ import { integerChartAlpha } from './alpha-values.mjs';
 import { TempoMap } from './tempo.mjs';
 import { sampleCurveTrajectory } from './curve-trajectory.mjs';
 import { trajectorySplitSettings } from './trajectory-simplify.mjs';
-import { validateNoiseAreas, diagnoseNoiseAreas, normalizeNoiseAreas, NOISE_VERSION } from './noise-areas.mjs';
+import { validateNoiseAreas, normalizeNoiseAreas, NOISE_VERSION } from './noise-areas.mjs';
 import { validateNoiseLayers, NOISE_LAYER_VERSION } from './noise-skin.mjs';
 import { emitModHook } from './mod-hooks.mjs';
 import { validateGlobalEvents, GLOBAL_EVENT_VERSION } from './global-events.mjs';
 import { t } from '../i18n.mjs';
 import { normalizeLineGroups, reservedLineGroupName } from './line-groups.mjs';
+import { diagnoseChart } from './chart-diagnostics.mjs';
+import { resourceDiagnostics, compatibilityDiagnostics } from './diagnostic-resources.mjs';
 
 export const EVENT_TYPES = ['moveXEvents', 'moveYEvents', 'rotateEvents', 'alphaEvents', 'speedEvents'];
 export const EXTENDED_TYPES = ['scaleXEvents', 'scaleYEvents', 'colorEvents', 'paintEvents', 'textEvents', 'inclineEvents', 'gifEvents'];
@@ -131,61 +133,8 @@ export function assertChart(chart) {
   });
 }
 
-export function diagnose(chart) {
-  const issues = [];
-  issues.push(...diagnoseNoiseAreas(chart.blockAreaList ?? []));
-  const addIssue = (issue, severity = 'warning') => issues.push({ severity, ...issue });
-  const bpmBeats = new Set();
-  for (const [index, entry] of chart.BPMList.entries()) {
-    const beat = beatValue(entry.startTime);
-    if (bpmBeats.has(beat)) addIssue({ line: 0, beat, index, path: `BPMList[${index}]`, message: t('chart.s5c7f11a') }, 'info');
-    bpmBeats.add(beat);
-  }
-  for (const [lineIndex, line] of (chart.judgeLineList ?? []).entries()) {
-    const seen = new Map();
-    for (const [index, note] of (line.notes ?? []).entries()) {
-      const beat = beatValue(note.startTime);
-      const report = (message, severity = 'error') => addIssue({ line: lineIndex, beat, index, path: `notes[${index}]`, message }, severity);
-      if (beatValue(note.endTime) < beat) report(t('chart.s09eb5b2'));
-      if (note.type === 2 && beatValue(note.endTime) === beat) report(t('chart.sd9e7995'));
-      if (Math.abs(note.positionX) > 675) report(t('chart.s91fb3b9'), 'warning');
-      if (note.isFake === true || Number(note.isFake) === 1) continue;
-      const type = Number(note.type);
-      const category = type === 1 || type === 2 ? 1 : type === 3 ? 2 : 0;
-      if (!category) continue;
-      const key = `${beat}:${note.positionX}:${noteIsAbove(note)}`;
-      const previous = seen.get(key) ?? 0;
-      if (previous & category) report(t('chart.sb895491'), 'warning');
-      seen.set(key, previous | category);
-    }
-    const inspectEvents = (layer, layerIndex, extended) => {
-      for (const type of [...EVENT_TYPES, ...EXTENDED_TYPES]) {
-        if (type === 'paintEvents') continue;
-        const events = layer?.[type] ?? [];
-        if (!Array.isArray(events)) continue;
-        const ordered = events.map((event, index) => ({ event, index })).sort((left, right) => beatValue(left.event.startTime) - beatValue(right.event.startTime));
-        for (let position = 1; position < ordered.length; position++) {
-          const previous = ordered[position - 1]; const current = ordered[position];
-          if (beatValue(current.event.startTime) < beatValue(previous.event.endTime)) {
-            addIssue({ line: lineIndex, beat: beatValue(current.event.startTime), index: current.index, layer: layerIndex, extended, path: `${type}[${current.index}]`, message: t('chart.s24d7d12', { p0: type }) }, 'error');
-          }
-        }
-      }
-    };
-    for (const [layerIndex, layer] of (line.eventLayers ?? []).entries()) inspectEvents(layer, layerIndex, false);
-    inspectEvents(line.extended, -1, true);
-    const visited = new Set([lineIndex]);
-    let parent = line.father ?? -1;
-    while (parent !== -1) {
-      if (!Number.isInteger(parent) || !chart.judgeLineList[parent] || visited.has(parent)) {
-        addIssue({ line: lineIndex, beat: 0, path: 'father', message: t('chart.s237845c') }, 'error');
-        break;
-      }
-      visited.add(parent);
-      parent = chart.judgeLineList[parent].father ?? -1;
-    }
-  }
-  return issues;
+export function diagnose(chart, options = {}) {
+  return [...diagnoseChart(chart, options), ...resourceDiagnostics(chart, options), ...compatibilityDiagnostics(chart, options.target)];
 }
 
 export function previewLimitations(chart) {

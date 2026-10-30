@@ -38,11 +38,7 @@ export class LineRuntime {
     this.extended = Object.fromEntries(Object.entries(defaults).map(([type, fallback]) => [type, new EventTrack(line.extended?.[type], tempo, factor, fallback)]));
     this.controls = Object.fromEntries(Object.entries({ alpha: 'alphaControl', pos: 'posControl', size: 'sizeControl', skew: 'skewControl', y: 'yControl' })
       .map(([property, name]) => [property, new ControlCurve(line[name], property)]));
-    this.notes = (line.notes ?? []).map((note, index) => {
-      const start = tempo.seconds(note.startTime, factor);
-      const end = tempo.seconds(note.endTime, factor);
-      return { note, index, start, end, floor: this.floor(start) + (note.yOffset ?? 0), tail: this.floor(end) + (note.yOffset ?? 0) };
-    });
+    this.notes = (line.notes ?? []).map((note, index) => this.noteEntry(note, index, tempo));
     this.minSpeed = this.notes.reduce((minimum, entry) => Math.min(minimum, Math.abs(entry.note.speed ?? 1) || 1), 1);
     this.hitTimes = [...this.notes].sort((left, right) => left.start - right.start);
     this.holdIndex = new IntervalIndex(this.notes.filter(entry => entry.note.type === 2), entry => entry.start, entry => entry.end);
@@ -52,6 +48,10 @@ export class LineRuntime {
   }
 
   floor(seconds) { return this.speeds.reduce((sum, speed) => sum + speed.distance(seconds), 0); }
+  noteEntry(note, index, tempo) {
+    const factor = this.line.bpmfactor ?? 1, start = tempo.seconds(note.startTime, factor), end = tempo.seconds(note.endTime, factor);
+    return { note, index, start, end, floor: this.floor(start) + (note.yOffset ?? 0), tail: this.floor(end) + (note.yOffset ?? 0) };
+  }
   value(type, seconds) { return this.tracks[type].reduce((sum, track) => sum + Number(track.value(seconds)), 0); }
 
   state(seconds) {

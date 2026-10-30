@@ -10,6 +10,7 @@ export function createSettingsPanel({ onLocaleChange = () => {} } = {}) {
   const skins = document.createElement('section'); skins.id = 'editor-skin-settings'; skins.dataset.settingsCategory = 'appearance';
   const noteSkins = document.createElement('section'); noteSkins.id = 'note-skin-settings'; noteSkins.dataset.settingsCategory = 'appearance';
   const dictation = createDictationSettings(); dictation.dataset.settingsCategory = 'input';
+  const about = document.createElement('section'); about.id = 'about-settings'; about.dataset.settingsCategory = 'about';
   let navigation;
   const categoryFor = { 'fps-unlimited': 'general', 'viewport-overflow': 'preview', volume: 'audio', 'line-numbers': 'preview', 'tips-enabled': 'general', 'text-selection-drag': 'input', 'line-switcher-enabled': 'input', 'clipboard-history-enabled': 'input', 'autosave-enabled': 'storage', 'include-backup-charts': 'compatibility' };
   // Detail blocks live in index.html; keep the same nodes across rebuilds.
@@ -74,7 +75,7 @@ export function createSettingsPanel({ onLocaleChange = () => {} } = {}) {
     };
     const languageHint = document.createElement('p'); languageHint.className = 'hint'; languageHint.textContent = t('settings.languageHint');
     languageField.append(languageSelect); language.append(languageField, languageHint); body.append(language);
-    body.append(skins, noteSkins);
+    body.append(skins, noteSkins, about);
 
   group(t('settings.s7757a0d'), [['fps-unlimited', t('settings.s0908c46'), 'checkbox', false], ['fps-limit', t('settings.s819ead9'), 'number', DEFAULT_SETTINGS.fpsLimit, 10, undefined, 'any']]);
   const fpsInput = body.querySelector('#fps-limit'); fpsInput.disabled = true;
@@ -99,7 +100,9 @@ export function createSettingsPanel({ onLocaleChange = () => {} } = {}) {
   const dragHint = document.createElement('p'); dragHint.className = 'hint'; dragHint.textContent = t('settings.s1ee44b7'); body.lastElementChild.append(dragHint);
   group(t('settings.s3334602'), [['text-selection-drag', t('settings.s745b520'), 'checkbox', false]]);
   body.append(dictation);
-  group(t('settings.s671e28c'), [['line-switcher-enabled', t('settings.s1e57415'), 'checkbox', true]]);
+  group(t('settings.s671e28c'), [['line-switcher-enabled', t('settings.s1e57415'), 'checkbox', true], ['overlapping-line-picker', t('preview-lines.setting'), 'checkbox', DEFAULT_EDITOR_PREFERENCES.overlappingLinePicker]]);
+  group(t('direct-placement.label'), [['placement-opacity', t('direct-placement.opacity'), 'range', DEFAULT_EDITOR_PREFERENCES.placementOpacity, 0, 1, 0.05]]);
+  group(t('note-spacing.group'), [['note-spacing', t('note-spacing.label'), 'number', DEFAULT_EDITOR_PREFERENCES.noteSpacing, .05, 10, .05], ['notes-only-note-scale', t('note-spacing.notesOnlyScale'), 'number', DEFAULT_EDITOR_PREFERENCES.notesOnlyNoteScale, .1, 3, .05]]);
   group(t('settings.sc4eb94d'), [['clipboard-history-enabled', t('settings.sc239e97'), 'checkbox', true]]);
   const clipboardHint = document.createElement('p'); clipboardHint.className = 'hint'; clipboardHint.textContent = t('settings.saccc96a'); body.lastElementChild.append(clipboardHint);
   group(t('settings.s54a747c'), [['default-line-thickness', t('settings.sabcccbd'), 'number', DEFAULT_SETTINGS.lineScale, 0.1, 10, 0.1]]);
@@ -132,6 +135,7 @@ export function createSettingsPanel({ onLocaleChange = () => {} } = {}) {
   build();
   document.body.append(dialog);
   navigation = new SettingsNavigation(dialog, body);
+  dialog.settingsNavigation = navigation;
   attachRangeValueTooltip(dialog, body);
   return dialog;
 }

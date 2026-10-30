@@ -65,17 +65,17 @@ export class BatchControls {
     if (this.active && (session !== this.active.session || session.chart !== this.active.snapshot.chart || this.signature(this.active.area, session) !== this.active.signature || !this.enabled())) this.cancel();
     const stage = this.stage.getBoundingClientRect();
     for (const [area, group] of this.groups) {
-      const multiSelection = area === 'notes'
+      const multiSelection = !session.multiLineActive ? 0 : area === 'notes'
         ? [...(session.multiLineSelection?.values() ?? [])].reduce((sum, values) => sum + values.size, 0)
         : [...(session.multiEventSelection?.values() ?? [])].reduce((sum, values) => sum + values.size, 0);
       const selection = area === 'notes' ? multiSelection + session.selection.size : multiSelection + session.eventSelection.size;
       const multiMode = session.multiLineActive && ((area === 'notes' && session.multiLineMode === 'notes') || (area === 'events' && session.multiLineMode === 'events'));
       const multiIntent = session.multiSelectionIntent === area;
-      const canShow = multiMode ? multiSelection > 0 && multiIntent : selection >= 2 || (selection > 0 && multiIntent);
+      const canShow = this.timeline.noteView && area === 'events' ? false : multiMode ? multiSelection > 0 && multiIntent : selection >= 2 || (selection > 0 && multiIntent);
       group.host.hidden = !this.enabled() || !canShow;
       if (this.active || group.host.hidden) continue;
       const canvas = area === 'notes' ? this.timeline.notesCanvas : this.timeline.eventsCanvas;
-      const rectangle = canvas.getBoundingClientRect();
+      const rectangle = area === 'notes' && this.timeline.noteView ? { left: stage.left, top: stage.top, width: canvas.clientWidth, height: canvas.clientHeight } : canvas.getBoundingClientRect();
       if (!rectangle.width) { group.host.hidden = true; continue; }
       const signature = `${this.signature(area, session)}:${rectangle.width}:${rectangle.height}`;
       if (signature === group.signature) continue;
@@ -83,8 +83,19 @@ export class BatchControls {
       const point = area === 'notes' ? this.timeline.cursor : this.timeline.eventCursor;
       const bounds = this.selectionBounds(area, captureSelection(session), canvas);
       const requested = Math.max(bounds.left + 20, Math.min(bounds.right - 26, (point?.x ?? (bounds.left + bounds.width / 2)) + 50));
-      const horizontal = Math.max(8, Math.min(rectangle.width - 26, requested));
-      const vertical = Math.max(25, Math.min(rectangle.height - 97, (point?.y ?? rectangle.height / 2) - 30));
+      let horizontal = Math.max(8, Math.min(rectangle.width - 26, requested));
+      let vertical = Math.max(25, Math.min(rectangle.height - 97, (point?.y ?? rectangle.height / 2) - 30));
+      const view = area === 'notes' ? this.timeline.noteView : null;
+      if (view?.viewport) {
+        // A rotated canvas's bounding box includes clipped corners. Keep the
+        // three controls inside the actual preview viewport instead.
+        const corners = [[0, 0], [26, 0], [0, 90], [26, 90]].map(([x, y]) => view.screen({ x: horizontal + x, y: vertical + y }));
+        const { left, top, width, height } = view.viewport;
+        const dx = Math.max(left + 8 - Math.min(...corners.map(point => point.x)), Math.min(0, left + width - 8 - Math.max(...corners.map(point => point.x))));
+        const dy = Math.max(top + 8 - Math.min(...corners.map(point => point.y)), Math.min(0, top + height - 8 - Math.max(...corners.map(point => point.y))));
+        horizontal += dx * Math.cos(view.angle) + dy * Math.sin(view.angle);
+        vertical += -dx * Math.sin(view.angle) + dy * Math.cos(view.angle);
+      }
       group.host.style.left = `${rectangle.left - stage.left + horizontal}px`;
       group.host.style.top = `${rectangle.top - stage.top + vertical}px`;
     }
@@ -110,7 +121,8 @@ export class BatchControls {
     const point = this.clampPoint(rawPoint, bounds, canvas);
     this.active = { session, snapshot, kind, button, area, lineIndex: activeLineIndex, bounds, signature: this.signature(area, session), pointerId: event.pointerId, start: point, point, canvas,
       unit: Math.max(0.35, canvas.clientHeight / 1080), factor: session.chart.judgeLineList?.[activeLineIndex]?.bpmfactor ?? 1,
-      startBeat: this.timeline.tempo.beat(this.timeline.tempo.seconds(this.timeline.origin, session.chart.judgeLineList?.[activeLineIndex]?.bpmfactor ?? 1) + (canvas.clientHeight - (this.timeline.judgementOffset ?? 42) - point.y) / this.timeline.scale, session.chart.judgeLineList?.[activeLineIndex]?.bpmfactor ?? 1), startX: typeof this.timeline.notePositionAt === 'function' ? this.timeline.notePositionAt(point.x, activeLineIndex) : point.x };
+      side: this.timeline.noteView?.sideAt?.(point.y),
+      startBeat: this.timeline.tempo.beat(this.timeline.noteView?.flow ? this.timeline.timeAt(point.y) : this.timeline.tempo.seconds(this.timeline.origin, session.chart.judgeLineList?.[activeLineIndex]?.bpmfactor ?? 1) + ((this.timeline.baseline?.(canvas.clientHeight) ?? canvas.clientHeight - (this.timeline.judgementOffset ?? 42)) - point.y) / this.timeline.scale, session.chart.judgeLineList?.[activeLineIndex]?.bpmfactor ?? 1), startX: typeof this.timeline.notePositionAt === 'function' ? this.timeline.notePositionAt(point.x, activeLineIndex) : point.x };
     this.timeline.scaleAxis = kind === 'note-scale' ? selectionScaleAnchor(snapshot, this.anchorMode) : null;
     this.timeline.scaleAxisLine = kind === 'note-scale' ? activeLineIndex : null;
     button.setPointerCapture(event.pointerId); this.timeline.changed();
@@ -128,15 +140,16 @@ export class BatchControls {
     this.timeline.scaleAxisLine = kind === 'note-scale' ? active.lineIndex : null;
     const deltaX = point.x - start.x; const deltaY = point.y - start.y;
     active.button.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
-    const seconds = this.timeline.tempo.seconds(this.timeline.origin, factor) + (active.canvas.clientHeight - (this.timeline.judgementOffset ?? 42) - point.y) / this.timeline.scale;
+    const baseline = this.timeline.baseline?.(active.canvas.clientHeight) ?? active.canvas.clientHeight - (this.timeline.judgementOffset ?? 42);
+    const seconds = this.timeline.noteView?.flow ? this.timeline.timeAt(point.y, active.side) : this.timeline.tempo.seconds(this.timeline.origin, factor) + (baseline - point.y) / this.timeline.scale;
     const deltaBeat = beatValue(snapTime(seconds, this.timeline.division, this.timeline.tempo, factor)) - active.startBeat;
     const deltaEntries = active.area === 'notes' ? snapshot.notes : snapshot.events;
     const deltaBeatByLine = new Map([...new Set(deltaEntries.map(entry => entry.lineIndex))].map(lineIndex => {
       const lineFactor = typeof this.timeline.factorForLine === 'function'
         ? this.timeline.factorForLine(lineIndex)
         : active.factor;
-      const startSeconds = this.timeline.tempo.seconds(this.timeline.origin, lineFactor) + (active.canvas.clientHeight - (this.timeline.judgementOffset ?? 42) - start.y) / this.timeline.scale;
-      const currentSeconds = this.timeline.tempo.seconds(this.timeline.origin, lineFactor) + (active.canvas.clientHeight - (this.timeline.judgementOffset ?? 42) - point.y) / this.timeline.scale;
+      const startSeconds = this.timeline.noteView?.flow ? this.timeline.timeAt(start.y, active.side) : this.timeline.tempo.seconds(this.timeline.origin, lineFactor) + (baseline - start.y) / this.timeline.scale;
+      const currentSeconds = this.timeline.noteView?.flow ? this.timeline.timeAt(point.y, active.side) : this.timeline.tempo.seconds(this.timeline.origin, lineFactor) + (baseline - point.y) / this.timeline.scale;
       return [lineIndex, beatValue(snapTime(currentSeconds, this.timeline.division, this.timeline.tempo, lineFactor)) - beatValue(snapTime(startSeconds, this.timeline.division, this.timeline.tempo, lineFactor))];
     }));
     const panelWidth = active.area === 'notes'
@@ -146,7 +159,7 @@ export class BatchControls {
       ? (typeof this.timeline.noteInset === 'function' ? this.timeline.noteInset(panelWidth) : 0)
       : 0;
     const contentWidth = Math.max(1, panelWidth - inset * 2);
-    const logicalDeltaX = active.area === 'notes' ? deltaX / contentWidth * 1350 : 0;
+    const logicalDeltaX = active.area === 'notes' ? deltaX / (this.timeline.horizontalScale?.() ?? contentWidth / 1350) : 0;
     const result = controlSelection(snapshot, kind, { deltaBeat, deltaBeatByLine, deltaX: logicalDeltaX, dragX: deltaX / active.unit, anchorMode: this.anchorMode, snapX: this.timeline.snapX, gridCount: this.timeline.gridCount });
     active.result = result;
     const view = Object.create(active.session);
